@@ -1,6 +1,7 @@
 package dev.jem.offlinegit.presentation
 
 import dev.jem.offlinegit.domain.BranchDownloadJob
+import dev.jem.offlinegit.domain.BranchDownloadJobStatus
 import dev.jem.offlinegit.domain.BranchDownloadProgress
 import dev.jem.offlinegit.domain.BranchDownloader
 import dev.jem.offlinegit.domain.DataError
@@ -66,6 +67,54 @@ class OfflineGitViewModelTest {
     }
 
     @Test
+    fun `loads persisted download job for selected branch`() = runTest {
+        val repositoryStore = FakeRepositoryStore()
+        val repository = GithubRepository(
+            id = 10,
+            owner = "octo",
+            name = "downloaded",
+            defaultBranch = "main",
+            isPrivate = false,
+            updatedAt = null,
+        )
+        val branch = GithubBranch(name = "main", headSha = "commit-sha")
+        val commit = GithubCommitSummary(
+            sha = "commit-sha",
+            firstParentSha = null,
+            authorName = null,
+            authorEmail = null,
+            message = "Commit",
+            committedAt = null,
+        )
+        val details = GithubCommitDetails(
+            sha = commit.sha,
+            firstParentSha = null,
+            authorName = null,
+            authorEmail = null,
+            message = commit.message,
+            committedAt = null,
+            files = emptyList(),
+        )
+        val job = BranchDownloadJob(
+            id = "10:main",
+            repositoryId = repository.id,
+            branchName = branch.name,
+            status = BranchDownloadJobStatus.COMPLETED,
+            progress = 1.0,
+            errorMessage = null,
+        )
+        repositoryStore.upsertRepositories(listOf(repository))
+        repositoryStore.upsertBranches(repositoryId = repository.id, branches = listOf(branch))
+        repositoryStore.upsertCommits(repositoryId = repository.id, branchName = branch.name, commits = listOf(commit))
+        repositoryStore.upsertCommitDetails(repositoryId = repository.id, commit = details)
+        repositoryStore.upsertDownloadJob(job)
+
+        val viewModel = createViewModel(repositoryStore = repositoryStore)
+
+        assertEquals(job, viewModel.state.value.downloadJob)
+    }
+
+    @Test
     fun `fetch repositories stores remote repositories`() = runTest {
         val remoteRepository = GithubRepository(
             id = 42,
@@ -106,6 +155,7 @@ class OfflineGitViewModelTest {
         private val branches = mutableMapOf<Long, List<GithubBranch>>()
         private val commits = mutableMapOf<Pair<Long, String>, List<GithubCommitSummary>>()
         private val details = mutableMapOf<String, GithubCommitDetails>()
+        private val downloadJobs = mutableListOf<BranchDownloadJob>()
 
         override suspend fun upsertAccount(account: GithubAccount): EmptyResult<DataError.Local> = Result.Success(Unit)
 
@@ -155,12 +205,17 @@ class OfflineGitViewModelTest {
         override suspend fun getCommitDetails(sha: String): Result<GithubCommitDetails, DataError.Local> =
             details[sha]?.let { Result.Success(it) } ?: Result.Error(DataError.Local.NOT_FOUND)
 
-        override suspend fun upsertDownloadJob(job: BranchDownloadJob): EmptyResult<DataError.Local> = Result.Success(Unit)
+        override suspend fun upsertDownloadJob(job: BranchDownloadJob): EmptyResult<DataError.Local> {
+            downloadJobs += job
+            return Result.Success(Unit)
+        }
 
         override suspend fun getDownloadJob(
             repositoryId: Long,
             branchName: String,
-        ): Result<BranchDownloadJob?, DataError.Local> = Result.Success(null)
+        ): Result<BranchDownloadJob?, DataError.Local> = Result.Success(
+            downloadJobs.lastOrNull { it.repositoryId == repositoryId && it.branchName == branchName },
+        )
     }
 
     private class FakeGithubRemoteDataSource(

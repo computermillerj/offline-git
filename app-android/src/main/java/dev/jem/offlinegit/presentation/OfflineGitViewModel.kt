@@ -3,6 +3,7 @@ package dev.jem.offlinegit.presentation
 import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.jem.offlinegit.domain.BranchDownloadJob
 import dev.jem.offlinegit.domain.BranchDownloadProgress
 import dev.jem.offlinegit.domain.BranchDownloader
 import dev.jem.offlinegit.domain.DataError
@@ -214,6 +215,17 @@ class OfflineGitViewModel(
                 .dataOrNull { "Unable to load commit details: ${it.toMessage()}" }
                 ?: return
         }
+        val downloadJob = if (branch == null) {
+            null
+        } else {
+            when (val result = repositoryStore.getDownloadJob(repositoryId = repository.id, branchName = branch.name)) {
+                is Result.Error -> {
+                    _state.update { it.copy(isLoading = false, error = "Unable to load download status: ${result.error.toMessage()}") }
+                    return
+                }
+                is Result.Success -> result.data
+            }
+        }
         val files = details?.files.orEmpty()
         val selectedFile = files.firstOrNull { it.path == filePath } ?: files.firstOrNull()
         val diff = if (commit == null || selectedFile == null) {
@@ -235,6 +247,7 @@ class OfflineGitViewModel(
                 files = files,
                 selectedFilePath = selectedFile?.path,
                 diff = diff,
+                downloadJob = downloadJob,
                 error = null,
             )
         }
@@ -384,6 +397,7 @@ data class OfflineGitState(
     val files: List<GithubCommitFile> = emptyList(),
     val selectedFilePath: String? = null,
     val diff: DiffFile? = null,
+    val downloadJob: BranchDownloadJob? = null,
     val githubToken: String = "",
     val syncStatus: String? = null,
     val isLoading: Boolean = true,

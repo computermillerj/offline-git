@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.jem.offlinegit.domain.BranchDownloadJob
+import dev.jem.offlinegit.domain.BranchDownloadJobStatus
 import dev.jem.offlinegit.domain.DiffFile
 import dev.jem.offlinegit.domain.DiffHunk
 import dev.jem.offlinegit.domain.DiffLine
@@ -90,6 +92,7 @@ fun OfflineGitScreen(
                 hasRepository = state.selectedRepositoryId != null,
                 hasBranch = state.selectedBranchName != null,
                 isLoading = state.isLoading,
+                downloadJob = state.downloadJob,
                 onAction = onAction,
             )
         }
@@ -214,6 +217,7 @@ private fun GithubSyncCard(
     hasRepository: Boolean,
     hasBranch: Boolean,
     isLoading: Boolean,
+    downloadJob: BranchDownloadJob?,
     onAction: (OfflineGitAction) -> Unit,
 ) {
     SectionCard(title = "GitHub sync") {
@@ -250,6 +254,17 @@ private fun GithubSyncCard(
             onClick = { onAction(OfflineGitAction.OnDownloadBranchClick) },
         ) {
             Text(text = "Download selected branch")
+        }
+        if (downloadJob != null) {
+            Text(
+                text = downloadJob.statusText(),
+                style = MaterialTheme.typography.bodySmall,
+                color = when (downloadJob.status) {
+                    BranchDownloadJobStatus.COMPLETED -> MaterialTheme.colorScheme.primary
+                    BranchDownloadJobStatus.FAILED -> MaterialTheme.colorScheme.error
+                    BranchDownloadJobStatus.RUNNING -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
         }
     }
 }
@@ -386,6 +401,12 @@ private fun DiffLine.prefix(): String = when (type) {
     DiffLineType.NO_NEWLINE -> "\\"
 }
 
+private fun BranchDownloadJob.statusText(): String = when (status) {
+    BranchDownloadJobStatus.RUNNING -> "Download running: ${(progress * 100).toInt()}%"
+    BranchDownloadJobStatus.COMPLETED -> "Downloaded for offline use"
+    BranchDownloadJobStatus.FAILED -> "Download failed: ${errorMessage.orEmpty()}"
+}
+
 @Preview(showBackground = true)
 @Composable
 private fun OfflineGitScreenPreview() {
@@ -455,6 +476,14 @@ private fun previewState(): OfflineGitState {
         files = listOf(file),
         selectedFilePath = file.path,
         diff = diff,
+        downloadJob = BranchDownloadJob(
+            id = "1:main",
+            repositoryId = repository.id,
+            branchName = branch.name,
+            status = BranchDownloadJobStatus.COMPLETED,
+            progress = 1.0,
+            errorMessage = null,
+        ),
         isLoading = false,
     )
 }
