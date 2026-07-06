@@ -1,0 +1,150 @@
+CREATE TABLE Account (
+    id INTEGER NOT NULL PRIMARY KEY,
+    login TEXT NOT NULL,
+    avatarUrl TEXT
+);
+
+CREATE TABLE Repository (
+    id INTEGER NOT NULL PRIMARY KEY,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    defaultBranch TEXT NOT NULL,
+    isPrivate INTEGER NOT NULL,
+    updatedAt TEXT,
+    UNIQUE(owner, name)
+);
+
+CREATE TABLE Branch (
+    repositoryId INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    headSha TEXT NOT NULL,
+    downloadedAt TEXT,
+    PRIMARY KEY(repositoryId, name),
+    FOREIGN KEY(repositoryId) REFERENCES Repository(id) ON DELETE CASCADE
+);
+
+CREATE TABLE GitCommit (
+    sha TEXT NOT NULL PRIMARY KEY,
+    repositoryId INTEGER NOT NULL,
+    firstParentSha TEXT,
+    authorName TEXT,
+    authorEmail TEXT,
+    message TEXT NOT NULL,
+    committedAt TEXT,
+    FOREIGN KEY(repositoryId) REFERENCES Repository(id) ON DELETE CASCADE
+);
+
+CREATE TABLE BranchCommit (
+    repositoryId INTEGER NOT NULL,
+    branchName TEXT NOT NULL,
+    sha TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY(repositoryId, branchName, sha),
+    FOREIGN KEY(repositoryId, branchName) REFERENCES Branch(repositoryId, name) ON DELETE CASCADE,
+    FOREIGN KEY(sha) REFERENCES GitCommit(sha) ON DELETE CASCADE
+);
+
+CREATE TABLE CommitFile (
+    commitSha TEXT NOT NULL,
+    path TEXT NOT NULL,
+    previousPath TEXT,
+    status TEXT NOT NULL,
+    additions INTEGER NOT NULL,
+    deletions INTEGER NOT NULL,
+    patchId TEXT,
+    oldBlobSha TEXT,
+    newBlobSha TEXT,
+    PRIMARY KEY(commitSha, path),
+    FOREIGN KEY(commitSha) REFERENCES GitCommit(sha) ON DELETE CASCADE
+);
+
+CREATE TABLE DownloadJob (
+    id TEXT NOT NULL PRIMARY KEY,
+    repositoryId INTEGER NOT NULL,
+    branchName TEXT NOT NULL,
+    status TEXT NOT NULL,
+    progress REAL NOT NULL,
+    errorMessage TEXT,
+    FOREIGN KEY(repositoryId, branchName) REFERENCES Branch(repositoryId, name) ON DELETE CASCADE
+);
+
+selectAccounts:
+SELECT * FROM Account ORDER BY login;
+
+upsertAccount:
+INSERT OR REPLACE INTO Account(id, login, avatarUrl)
+VALUES (?, ?, ?);
+
+selectRepositories:
+SELECT * FROM Repository ORDER BY owner, name;
+
+upsertRepository:
+INSERT OR REPLACE INTO Repository(id, owner, name, defaultBranch, isPrivate, updatedAt)
+VALUES (?, ?, ?, ?, ?, ?);
+
+selectBranches:
+SELECT * FROM Branch
+WHERE repositoryId = ?
+ORDER BY name;
+
+deleteBranches:
+DELETE FROM Branch
+WHERE repositoryId = ?;
+
+upsertBranch:
+INSERT OR REPLACE INTO Branch(repositoryId, name, headSha, downloadedAt)
+VALUES (?, ?, ?, ?);
+
+selectCommitsForBranch:
+SELECT GitCommit.*
+FROM BranchCommit
+JOIN GitCommit ON GitCommit.sha = BranchCommit.sha
+WHERE BranchCommit.repositoryId = ? AND BranchCommit.branchName = ?
+ORDER BY BranchCommit.position;
+
+selectCommitBySha:
+SELECT * FROM GitCommit
+WHERE sha = ?;
+
+upsertCommit:
+INSERT OR REPLACE INTO GitCommit(
+    sha,
+    repositoryId,
+    firstParentSha,
+    authorName,
+    authorEmail,
+    message,
+    committedAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+deleteBranchCommits:
+DELETE FROM BranchCommit
+WHERE repositoryId = ? AND branchName = ?;
+
+insertBranchCommit:
+INSERT OR REPLACE INTO BranchCommit(repositoryId, branchName, sha, position)
+VALUES (?, ?, ?, ?);
+
+selectFilesForCommit:
+SELECT * FROM CommitFile
+WHERE commitSha = ?
+ORDER BY path;
+
+deleteFilesForCommit:
+DELETE FROM CommitFile
+WHERE commitSha = ?;
+
+upsertCommitFile:
+INSERT OR REPLACE INTO CommitFile(
+    commitSha,
+    path,
+    previousPath,
+    status,
+    additions,
+    deletions,
+    patchId,
+    oldBlobSha,
+    newBlobSha
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
