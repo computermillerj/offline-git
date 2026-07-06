@@ -6,6 +6,37 @@ Build a Kotlin Multiplatform app, Android-first, that connects to a GitHub accou
 
 Primary UI target: Android. On phones the flow is list-to-detail navigation (repos -> branches -> commits -> diff); on tablets and later desktop, a two-pane layout with repository/source context on the left and commit changes on the right, with Android Studio-like coloring and highlighting. KMP keeps a desktop target open at little extra cost.
 
+## Current implementation status
+
+Last updated: 2026-07-06. Latest implementation commit: `1a9b59c Cache HEAD snapshot tarball`.
+
+Implemented:
+
+- KMP Gradle project with `:shared` and Android Compose app in `:app-android`.
+- Token-based development auth, GitHub API client, and endpoints for user, repositories, branches, commit lists, commit details, blobs, and tarballs.
+- SQLDelight metadata storage for accounts, repositories, branches, commits, changed files, and branch download jobs.
+- Okio-backed blob and patch caches.
+- Branch download orchestration with progress reporting, persisted job status, cached GitHub patches, SHA-deduplicated blob downloads, and HEAD snapshot tarball indexing.
+- Tarball snapshot indexing that handles GitHub gzipped tarballs, strips archive root paths, skips binary blobs for snapshot caching, and computes Git blob SHA-1 values locally.
+- Diff pipeline with cached GitHub patch rendering first and local blob-based fallback when patches are missing.
+- Android UI for token entry, repository and branch loading, branch download, local repository/commit/file browsing, diff rendering, and download status display.
+- Unit tests for API calls, storage, branch downloads, tarball indexing, diff parsing/providers, and the Android ViewModel.
+
+Still to improve:
+
+- Use persisted `DownloadJob` state to resume or skip already-completed branch downloads instead of only recording status.
+- Improve old-blob SHA resolution for modified files so local blob fallback works more often across commit history.
+- Add production GitHub Device Flow auth and secure token storage.
+- Polish navigation/viewer UI, including side-by-side diff and larger-screen layouts.
+
+Validation currently passes with:
+
+```bash
+ANDROID_HOME=$HOME/Android/Sdk ./gradlew :shared:jvmTest
+ANDROID_HOME=$HOME/Android/Sdk ./gradlew :app-android:testDebugUnitTest :app-android:compileDebugKotlin
+ANDROID_HOME=$HOME/Android/Sdk ./gradlew check :app-android:assembleDebug
+```
+
 ## Core decisions
 
 1. **Start with GitHub API, not a full Git client.**
