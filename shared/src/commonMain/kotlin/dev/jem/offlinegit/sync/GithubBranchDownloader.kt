@@ -1,5 +1,6 @@
 package dev.jem.offlinegit.sync
 
+import dev.jem.offlinegit.domain.BlobStore
 import dev.jem.offlinegit.domain.BranchDownloadProgress
 import dev.jem.offlinegit.domain.BranchDownloader
 import dev.jem.offlinegit.domain.DataError
@@ -17,6 +18,7 @@ class GithubBranchDownloader(
     private val remoteDataSource: GithubRemoteDataSource,
     private val repositoryStore: RepositoryStore,
     private val patchStore: PatchStore,
+    private val blobStore: BlobStore,
 ) : BranchDownloader {
 
     override fun downloadBranch(
@@ -91,7 +93,14 @@ class GithubBranchDownloader(
                 is Result.Success -> result.data
             }
 
-            when (val result = storeCommitDetails(repositoryId = repository.id, details = details)) {
+            when (
+                val result = storeCommitDetails(
+                    owner = repository.owner,
+                    repositoryName = repository.name,
+                    repositoryId = repository.id,
+                    details = details,
+                )
+            ) {
                 is Result.Error -> {
                     emit(BranchDownloadProgress.Failed(result.error))
                     return@flow
@@ -111,9 +120,11 @@ class GithubBranchDownloader(
     }
 
     private suspend fun storeCommitDetails(
+        owner: String,
+        repositoryName: String,
         repositoryId: Long,
         details: GithubCommitDetails,
-    ): Result<Unit, DataError.Local> {
+    ): Result<Unit, DataError> {
         repositoryStore.upsertCommitDetails(repositoryId = repositoryId, commit = details).onError { error ->
             return Result.Error(error)
         }
@@ -127,12 +138,43 @@ class GithubBranchDownloader(
                 return Result.Error(error)
             }
         }
+        details.files
+            .flatMap { file -> listOfNotNull(file.oldBlobSha, file.newBlobSha ?: file.blobSha) }
+            .distinct()
+            .forEach { sha ->
+                cacheBlob(
+                    owner = owner,
+                    repository = repositoryName,
+                    sha = sha,
+                ).onError { error ->
+                    return Result.Error(error)
+                }
+            }
         return Result.Success(Unit)
     }
 
-    private inline fun <T> Result<T, DataError.Local>.onError(
-        block: (DataError.Local) -> Unit,
-    ): Result<T, DataError.Local> {
+    private suspend fun cacheBlob(
+        owner: String,
+        repository: String,
+        sha: String,
+    ): Result<Unit, DataError> {
+        when (val result = blobStore.hasBlob(sha)) {
+            is Result.Error -> return Result.Error(result.error)
+            is Result.Success -> if (result.data) return Result.Success(Unit)
+        }
+        val bytes = when (val result = remoteDataSource.getBlob(owner = owner, repository = repository, sha = sha)) {
+            is Result.Error -> return Result.Error(result.error)
+            is Result.Success -> result.data
+        }
+        return when (val result = blobStore.writeBlob(sha = sha, bytes = bytes)) {
+            is Result.Error -> Result.Error(result.error)
+            is Result.Success -> Result.Success(Unit)
+        }
+    }
+
+    private inline fun <T, E : DataError> Result<T, E>.onError(
+        block: (E) -> Unit,
+    ): Result<T, E> {
         if (this is Result.Error) {
             block(error)
         }

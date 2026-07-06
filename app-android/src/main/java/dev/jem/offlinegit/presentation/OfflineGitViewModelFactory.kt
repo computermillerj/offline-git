@@ -41,6 +41,7 @@ class OfflineGitViewModelFactory(
                 remoteDataSource = remoteDataSource,
                 repositoryStore = repositoryStore,
                 patchStore = patchStore,
+                blobStore = blobStore,
             ),
             tokenStore = tokenStore,
             closeRemoteResources = { httpClient.close() },

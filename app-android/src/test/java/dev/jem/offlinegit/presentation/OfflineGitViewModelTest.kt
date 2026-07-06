@@ -181,6 +181,12 @@ class OfflineGitViewModelTest {
             repository: String,
             sha: String,
         ): Result<GithubCommitDetails, DataError.Network> = error("not used")
+
+        override suspend fun getBlob(
+            owner: String,
+            repository: String,
+            sha: String,
+        ): Result<ByteArray, DataError.Network> = error("not used")
     }
 
     private class FakeBranchDownloader : BranchDownloader {

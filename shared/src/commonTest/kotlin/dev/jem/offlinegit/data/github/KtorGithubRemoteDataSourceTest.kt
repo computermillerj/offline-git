@@ -206,6 +206,33 @@ class KtorGithubRemoteDataSourceTest {
     }
 
     @Test
+    fun `getBlob requests raw GitHub blob bytes`() = runTest {
+        var acceptHeader: String? = null
+        var path: String? = null
+        val engine = MockEngine { request ->
+            acceptHeader = request.headers[HttpHeaders.Accept]
+            path = request.url.encodedPath
+            respond(
+                content = "blob content",
+                status = HttpStatusCode.OK,
+                headers = HeadersBuilder().apply {
+                    append(HttpHeaders.ContentType, ContentType.Application.OctetStream.toString())
+                }.build(),
+            )
+        }
+        val dataSource = KtorGithubRemoteDataSource(
+            httpClient = GithubHttpClientFactory.create(engine),
+            tokenStore = StaticTokenStore("token"),
+        )
+
+        val result = dataSource.getBlob(owner = "octo", repository = "hello", sha = "blob-sha")
+
+        assertEquals("/repos/octo/hello/git/blobs/blob-sha", path)
+        assertEquals("application/vnd.github.raw", acceptHeader)
+        assertEquals("blob content", assertIs<Result.Success<ByteArray>>(result).data.decodeToString())
+    }
+
+    @Test
     fun `rate limited forbidden response maps to too many requests`() = runTest {
         val engine = MockEngine {
             respond(

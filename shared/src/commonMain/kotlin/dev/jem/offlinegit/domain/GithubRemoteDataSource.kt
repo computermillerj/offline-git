@@ -22,4 +22,10 @@ interface GithubRemoteDataSource {
         repository: String,
         sha: String,
     ): Result<GithubCommitDetails, DataError.Network>
+
+    suspend fun getBlob(
+        owner: String,
+        repository: String,
+        sha: String,
+    ): Result<ByteArray, DataError.Network>
 }

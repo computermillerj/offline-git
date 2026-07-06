@@ -88,6 +88,18 @@ class KtorGithubRemoteDataSource(
         ).map { it.toGithubCommitDetails() }
     }
 
+    override suspend fun getBlob(
+        owner: String,
+        repository: String,
+        sha: String,
+    ): Result<ByteArray, DataError.Network> = withToken { token ->
+        getBytes(
+            path = "/repos/$owner/$repository/git/blobs/$sha",
+            token = token,
+            accept = GITHUB_RAW_MEDIA_TYPE,
+        )
+    }
+
     private suspend fun <T> withToken(
         block: suspend (String) -> Result<T, DataError.Network>,
     ): Result<T, DataError.Network> {
@@ -107,6 +119,16 @@ class KtorGithubRemoteDataSource(
         httpClient.get(urlString(path)) {
             addGithubHeaders(token)
             queryParameters.forEach { (key, value) -> parameter(key, value) }
+        }
+    }
+
+    private suspend fun getBytes(
+        path: String,
+        token: String,
+        accept: String,
+    ): Result<ByteArray, DataError.Network> = request {
+        httpClient.get(urlString(path)) {
+            addGithubHeaders(token = token, accept = accept)
         }
     }
 
@@ -203,9 +225,12 @@ class KtorGithubRemoteDataSource(
         else -> Result.Error(DataError.Network.UNKNOWN)
     }
 
-    private fun HttpRequestBuilder.addGithubHeaders(token: String) {
+    private fun HttpRequestBuilder.addGithubHeaders(
+        token: String,
+        accept: String = GITHUB_JSON_MEDIA_TYPE,
+    ) {
         bearerAuth(token)
-        header(HttpHeaders.Accept, GITHUB_JSON_MEDIA_TYPE)
+        header(HttpHeaders.Accept, accept)
         header(GITHUB_API_VERSION_HEADER, GITHUB_API_VERSION)
     }
 
@@ -224,6 +249,7 @@ class KtorGithubRemoteDataSource(
         const val GITHUB_API_VERSION = "2022-11-28"
         const val GITHUB_API_VERSION_HEADER = "X-GitHub-Api-Version"
         const val GITHUB_JSON_MEDIA_TYPE = "application/vnd.github+json"
+        const val GITHUB_RAW_MEDIA_TYPE = "application/vnd.github.raw"
         const val LINK_HEADER = "Link"
         const val PER_PAGE = 100
         const val RATE_LIMIT_REMAINING_HEADER = "X-RateLimit-Remaining"

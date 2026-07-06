@@ -1,5 +1,6 @@
 package dev.jem.offlinegit.sync
 
+import dev.jem.offlinegit.domain.BlobStore
 import dev.jem.offlinegit.domain.BranchDownloadProgress
 import dev.jem.offlinegit.domain.DataError
 import dev.jem.offlinegit.domain.EmptyResult
@@ -32,10 +33,12 @@ class GithubBranchDownloaderTest {
         )
         val repositoryStore = FakeRepositoryStore()
         val patchStore = FakePatchStore()
+        val blobStore = FakeBlobStore()
         val downloader = GithubBranchDownloader(
             remoteDataSource = remoteDataSource,
             repositoryStore = repositoryStore,
             patchStore = patchStore,
+            blobStore = blobStore,
         )
 
         val progress = downloader.downloadBranch(
@@ -58,6 +61,7 @@ class GithubBranchDownloaderTest {
         assertEquals(listOf(commit), repositoryStore.commits)
         assertEquals(listOf(details), repositoryStore.commitDetails)
         assertEquals(listOf(WrittenPatch(commitSha = commit.sha, path = "README.md", patch = "@@ -1 +1 @@")), patchStore.patches)
+        assertEquals(mapOf("blob-sha" to "blob-sha".encodeToByteArray().toList()), blobStore.blobs.mapValues { it.value.toList() })
         assertEquals(listOf(1), remoteDataSource.commitLimits)
     }
 
@@ -76,6 +80,7 @@ class GithubBranchDownloaderTest {
             remoteDataSource = remoteDataSource,
             repositoryStore = repositoryStore,
             patchStore = patchStore,
+            blobStore = FakeBlobStore(),
         )
 
         val progress = downloader.downloadBranch(
@@ -164,6 +169,12 @@ class GithubBranchDownloaderTest {
             repository: String,
             sha: String,
         ): Result<GithubCommitDetails, DataError.Network> = detailsResults.getValue(sha)
+
+        override suspend fun getBlob(
+            owner: String,
+            repository: String,
+            sha: String,
+        ): Result<ByteArray, DataError.Network> = Result.Success(sha.encodeToByteArray())
     }
 
     private class FakeRepositoryStore : RepositoryStore {
@@ -217,6 +228,24 @@ class GithubBranchDownloaderTest {
 
         override suspend fun getCommitDetails(sha: String): Result<GithubCommitDetails, DataError.Local> =
             Result.Success(commitDetails.first { it.sha == sha })
+    }
+
+    private class FakeBlobStore : BlobStore {
+        val blobs = mutableMapOf<String, ByteArray>()
+
+        override suspend fun hasBlob(sha: String): Result<Boolean, DataError.Local> = Result.Success(blobs.containsKey(sha))
+
+        override suspend fun writeBlob(
+            sha: String,
+            bytes: ByteArray,
+        ): EmptyResult<DataError.Local> {
+            blobs[sha] = bytes
+            return Result.Success(Unit)
+        }
+
+        override suspend fun readBlob(sha: String): Result<ByteArray, DataError.Local> = blobs[sha]
+            ?.let { Result.Success(it) }
+            ?: Result.Error(DataError.Local.NOT_FOUND)
     }
 
     private class FakePatchStore : PatchStore {
