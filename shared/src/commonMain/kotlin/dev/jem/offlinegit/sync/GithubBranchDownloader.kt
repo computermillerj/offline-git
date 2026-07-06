@@ -21,6 +21,7 @@ class GithubBranchDownloader(
     private val repositoryStore: RepositoryStore,
     private val patchStore: PatchStore,
     private val blobStore: BlobStore,
+    private val snapshotIndexer: TarballSnapshotIndexer = TarballSnapshotIndexer(),
 ) : BranchDownloader {
 
     override fun downloadBranch(
@@ -61,6 +62,21 @@ class GithubBranchDownloader(
                 errorMessage = null,
             ),
         )
+
+        when (
+            val result = cacheHeadSnapshot(
+                owner = repository.owner,
+                repository = repository.name,
+                ref = branch.headSha.ifBlank { branch.name },
+            )
+        ) {
+            is Result.Error -> {
+                failJob(jobId = jobId, repository = repository, branch = branch, progress = progress, error = result.error)
+                emit(BranchDownloadProgress.Failed(result.error))
+                return@flow
+            }
+            is Result.Success -> Unit
+        }
 
         val commits = when (
             val result = remoteDataSource.getCommits(
@@ -175,6 +191,35 @@ class GithubBranchDownloader(
                 errorMessage = error.toString(),
             ),
         )
+    }
+
+    private suspend fun cacheHeadSnapshot(
+        owner: String,
+        repository: String,
+        ref: String,
+    ): Result<Unit, DataError> {
+        val tarball = when (val result = remoteDataSource.getTarball(owner = owner, repository = repository, ref = ref)) {
+            is Result.Error -> return Result.Error(result.error)
+            is Result.Success -> result.data
+        }
+        val blobs = when (val result = snapshotIndexer.index(tarball)) {
+            is Result.Error -> return Result.Error(result.error)
+            is Result.Success -> result.data
+        }
+        blobs
+            .filter { it.isText }
+            .forEach { blob ->
+                when (val exists = blobStore.hasBlob(blob.sha)) {
+                    is Result.Error -> return Result.Error(exists.error)
+                    is Result.Success -> if (!exists.data) {
+                        when (val write = blobStore.writeBlob(sha = blob.sha, bytes = blob.bytes)) {
+                            is Result.Error -> return Result.Error(write.error)
+                            is Result.Success -> Unit
+                        }
+                    }
+                }
+            }
+        return Result.Success(Unit)
     }
 
     private suspend fun storeCommitDetails(

@@ -63,7 +63,13 @@ class GithubBranchDownloaderTest {
         assertEquals(listOf(commit), repositoryStore.commits)
         assertEquals(listOf(details), repositoryStore.commitDetails)
         assertEquals(listOf(WrittenPatch(commitSha = commit.sha, path = "README.md", patch = "@@ -1 +1 @@")), patchStore.patches)
-        assertEquals(mapOf("blob-sha" to "blob-sha".encodeToByteArray().toList()), blobStore.blobs.mapValues { it.value.toList() })
+        assertEquals(
+            expected = mapOf(
+                "8ab67f2e70cc4bf7cc4a0c1f84e8aea1e12039c9" to "snapshot\n".encodeToByteArray().toList(),
+                "blob-sha" to "blob-sha".encodeToByteArray().toList(),
+            ),
+            actual = blobStore.blobs.mapValues { it.value.toList() },
+        )
         assertEquals(BranchDownloadJobStatus.COMPLETED, repositoryStore.downloadJobs.last().status)
         assertEquals(1.0, repositoryStore.downloadJobs.last().progress)
         assertEquals(listOf(1), remoteDataSource.commitLimits)
@@ -181,6 +187,14 @@ class GithubBranchDownloaderTest {
             repository: String,
             sha: String,
         ): Result<ByteArray, DataError.Network> = Result.Success(sha.encodeToByteArray())
+
+        override suspend fun getTarball(
+            owner: String,
+            repository: String,
+            ref: String,
+        ): Result<ByteArray, DataError.Network> = Result.Success(
+            tarOf(entry(path = "repo-root/SNAPSHOT.txt", content = "snapshot\n".encodeToByteArray())),
+        )
     }
 
     private class FakeRepositoryStore : RepositoryStore {
@@ -293,4 +307,34 @@ class GithubBranchDownloaderTest {
         val path: String,
         val patch: String,
     )
+
+    private companion object {
+        const val BLOCK_SIZE = 512
+
+        fun tarOf(vararg entries: ByteArray): ByteArray = entries.fold(byteArrayOf()) { acc, entry ->
+            acc + entry
+        } + ByteArray(BLOCK_SIZE * 2)
+
+        fun entry(
+            path: String,
+            content: ByteArray,
+        ): ByteArray {
+            val header = ByteArray(BLOCK_SIZE)
+            header.writeText(offset = 0, length = 100, value = path)
+            header.writeText(offset = 124, length = 12, value = content.size.toString(radix = 8).padStart(length = 11, padChar = '0'))
+            header[156] = '0'.code.toByte()
+            val padding = ByteArray((BLOCK_SIZE - content.size % BLOCK_SIZE) % BLOCK_SIZE)
+            return header + content + padding
+        }
+
+        fun ByteArray.writeText(
+            offset: Int,
+            length: Int,
+            value: String,
+        ) {
+            value.encodeToByteArray()
+                .take(length)
+                .forEachIndexed { index, byte -> this[offset + index] = byte }
+        }
+    }
 }

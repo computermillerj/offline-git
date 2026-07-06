@@ -233,6 +233,30 @@ class KtorGithubRemoteDataSourceTest {
     }
 
     @Test
+    fun `getTarball requests repository archive bytes`() = runTest {
+        var path: String? = null
+        val engine = MockEngine { request ->
+            path = request.url.encodedPath
+            respond(
+                content = "tar bytes",
+                status = HttpStatusCode.OK,
+                headers = HeadersBuilder().apply {
+                    append(HttpHeaders.ContentType, ContentType.Application.OctetStream.toString())
+                }.build(),
+            )
+        }
+        val dataSource = KtorGithubRemoteDataSource(
+            httpClient = GithubHttpClientFactory.create(engine),
+            tokenStore = StaticTokenStore("token"),
+        )
+
+        val result = dataSource.getTarball(owner = "octo", repository = "hello", ref = "main")
+
+        assertEquals("/repos/octo/hello/tarball/main", path)
+        assertEquals("tar bytes", assertIs<Result.Success<ByteArray>>(result).data.decodeToString())
+    }
+
+    @Test
     fun `rate limited forbidden response maps to too many requests`() = runTest {
         val engine = MockEngine {
             respond(

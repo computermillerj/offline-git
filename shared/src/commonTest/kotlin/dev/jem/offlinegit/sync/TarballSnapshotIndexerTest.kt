@@ -1,6 +1,9 @@
 package dev.jem.offlinegit.sync
 
 import dev.jem.offlinegit.domain.Result
+import okio.Buffer
+import okio.GzipSink
+import okio.buffer
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -25,6 +28,18 @@ class TarballSnapshotIndexerTest {
         assertEquals("ce013625030ba8dba906f756967f9e9ca394464a", blobs.first().sha)
         assertContentEquals("hello\n".encodeToByteArray(), blobs.first().bytes)
         assertTrue(blobs.all { it.isText })
+    }
+
+    @Test
+    fun `indexes gzipped tarball`() {
+        val tar = tarOf(
+            entry(path = "repo-root/README.md", content = "hello\n".encodeToByteArray()),
+        ).gzip()
+
+        val blobs = assertIs<Result.Success<List<SnapshotBlob>>>(indexer.index(tar)).data
+
+        assertEquals(listOf("README.md"), blobs.map { it.path })
+        assertEquals("ce013625030ba8dba906f756967f9e9ca394464a", blobs.single().sha)
     }
 
     @Test
@@ -69,6 +84,14 @@ class TarballSnapshotIndexerTest {
         value.encodeToByteArray()
             .take(length)
             .forEachIndexed { index, byte -> this[offset + index] = byte }
+    }
+
+    private fun ByteArray.gzip(): ByteArray {
+        val buffer = Buffer()
+        GzipSink(buffer).buffer().use { sink ->
+            sink.write(this)
+        }
+        return buffer.readByteArray()
     }
 
     private companion object {

@@ -250,6 +250,12 @@ class OfflineGitViewModelTest {
             repository: String,
             sha: String,
         ): Result<ByteArray, DataError.Network> = error("not used")
+
+        override suspend fun getTarball(
+            owner: String,
+            repository: String,
+            ref: String,
+        ): Result<ByteArray, DataError.Network> = error("not used")
     }
 
     private class FakeBranchDownloader : BranchDownloader {

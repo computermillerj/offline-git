@@ -2,14 +2,18 @@ package dev.jem.offlinegit.sync
 
 import dev.jem.offlinegit.domain.DataError
 import dev.jem.offlinegit.domain.Result
+import okio.Buffer
 import okio.ByteString.Companion.toByteString
+import okio.GzipSource
+import okio.buffer
 
 class TarballSnapshotIndexer {
     fun index(tarBytes: ByteArray): Result<List<SnapshotBlob>, DataError.Local> = try {
+        val bytes = tarBytes.gunzipIfNeeded()
         val blobs = mutableListOf<SnapshotBlob>()
         var offset = 0
-        while (offset + BLOCK_SIZE <= tarBytes.size) {
-            val header = tarBytes.copyOfRange(offset, offset + BLOCK_SIZE)
+        while (offset + BLOCK_SIZE <= bytes.size) {
+            val header = bytes.copyOfRange(offset, offset + BLOCK_SIZE)
             if (header.all { it == 0.toByte() }) {
                 return Result.Success(blobs)
             }
@@ -19,13 +23,13 @@ class TarballSnapshotIndexer {
             val type = header[TYPE_OFFSET].toInt().toChar()
             val contentOffset = offset + BLOCK_SIZE
             val nextOffset = contentOffset + size.roundUpToBlock()
-            if (path != null && type.isRegularFile() && size <= tarBytes.size - contentOffset) {
-                val bytes = tarBytes.copyOfRange(contentOffset, contentOffset + size.toInt())
+            if (path != null && type.isRegularFile() && size <= bytes.size - contentOffset) {
+                val content = bytes.copyOfRange(contentOffset, contentOffset + size.toInt())
                 blobs += SnapshotBlob(
                     path = path,
-                    sha = bytes.gitBlobSha(),
-                    bytes = bytes,
-                    isText = bytes.none { it == 0.toByte() },
+                    sha = content.gitBlobSha(),
+                    bytes = content,
+                    isText = content.none { it == 0.toByte() },
                 )
             }
             offset = nextOffset.toInt()
@@ -33,6 +37,14 @@ class TarballSnapshotIndexer {
         Result.Success(blobs)
     } catch (e: Exception) {
         Result.Error(DataError.Local.UNKNOWN)
+    }
+
+    private fun ByteArray.gunzipIfNeeded(): ByteArray {
+        if (size < 2 || this[0] != GZIP_ID_1 || this[1] != GZIP_ID_2) {
+            return this
+        }
+        val source = GzipSource(Buffer().write(this))
+        return source.buffer().use { it.readByteArray() }
     }
 
     private fun ByteArray.path(): String? {
@@ -82,6 +94,8 @@ class TarballSnapshotIndexer {
         const val TYPE_OFFSET = 156
         const val PREFIX_OFFSET = 345
         const val PREFIX_LENGTH = 155
+        const val GZIP_ID_1: Byte = 0x1f
+        const val GZIP_ID_2: Byte = -0x75
     }
 }
 

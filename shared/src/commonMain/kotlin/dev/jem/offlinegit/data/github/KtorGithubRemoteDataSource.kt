@@ -100,6 +100,18 @@ class KtorGithubRemoteDataSource(
         )
     }
 
+    override suspend fun getTarball(
+        owner: String,
+        repository: String,
+        ref: String,
+    ): Result<ByteArray, DataError.Network> = withToken { token ->
+        getBytes(
+            path = "/repos/$owner/$repository/tarball/$ref",
+            token = token,
+            accept = GITHUB_JSON_MEDIA_TYPE,
+        )
+    }
+
     private suspend fun <T> withToken(
         block: suspend (String) -> Result<T, DataError.Network>,
     ): Result<T, DataError.Network> {

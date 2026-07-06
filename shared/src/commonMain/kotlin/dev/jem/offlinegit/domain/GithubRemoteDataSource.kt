@@ -28,4 +28,10 @@ interface GithubRemoteDataSource {
         repository: String,
         sha: String,
     ): Result<ByteArray, DataError.Network>
+
+    suspend fun getTarball(
+        owner: String,
+        repository: String,
+        ref: String,
+    ): Result<ByteArray, DataError.Network>
 }
