@@ -1,6 +1,8 @@
 package dev.jem.offlinegit.sync
 
 import dev.jem.offlinegit.domain.BlobStore
+import dev.jem.offlinegit.domain.BranchDownloadJob
+import dev.jem.offlinegit.domain.BranchDownloadJobStatus
 import dev.jem.offlinegit.domain.BranchDownloadProgress
 import dev.jem.offlinegit.domain.DataError
 import dev.jem.offlinegit.domain.EmptyResult
@@ -62,6 +64,8 @@ class GithubBranchDownloaderTest {
         assertEquals(listOf(details), repositoryStore.commitDetails)
         assertEquals(listOf(WrittenPatch(commitSha = commit.sha, path = "README.md", patch = "@@ -1 +1 @@")), patchStore.patches)
         assertEquals(mapOf("blob-sha" to "blob-sha".encodeToByteArray().toList()), blobStore.blobs.mapValues { it.value.toList() })
+        assertEquals(BranchDownloadJobStatus.COMPLETED, repositoryStore.downloadJobs.last().status)
+        assertEquals(1.0, repositoryStore.downloadJobs.last().progress)
         assertEquals(listOf(1), remoteDataSource.commitLimits)
     }
 
@@ -99,6 +103,8 @@ class GithubBranchDownloaderTest {
         )
         assertEquals(emptyList(), repositoryStore.commitDetails)
         assertEquals(emptyList(), patchStore.patches)
+        assertEquals(BranchDownloadJobStatus.FAILED, repositoryStore.downloadJobs.last().status)
+        assertEquals(DataError.Network.NOT_FOUND.toString(), repositoryStore.downloadJobs.last().errorMessage)
     }
 
     private fun aRepository(): GithubRepository = GithubRepository(
@@ -182,6 +188,7 @@ class GithubBranchDownloaderTest {
         val branches = mutableListOf<GithubBranch>()
         val commits = mutableListOf<GithubCommitSummary>()
         val commitDetails = mutableListOf<GithubCommitDetails>()
+        val downloadJobs = mutableListOf<BranchDownloadJob>()
 
         override suspend fun upsertAccount(account: GithubAccount): EmptyResult<DataError.Local> = Result.Success(Unit)
 
@@ -228,6 +235,18 @@ class GithubBranchDownloaderTest {
 
         override suspend fun getCommitDetails(sha: String): Result<GithubCommitDetails, DataError.Local> =
             Result.Success(commitDetails.first { it.sha == sha })
+
+        override suspend fun upsertDownloadJob(job: BranchDownloadJob): EmptyResult<DataError.Local> {
+            downloadJobs += job
+            return Result.Success(Unit)
+        }
+
+        override suspend fun getDownloadJob(
+            repositoryId: Long,
+            branchName: String,
+        ): Result<BranchDownloadJob?, DataError.Local> = Result.Success(
+            downloadJobs.lastOrNull { it.repositoryId == repositoryId && it.branchName == branchName },
+        )
     }
 
     private class FakeBlobStore : BlobStore {

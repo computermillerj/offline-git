@@ -1,5 +1,7 @@
 package dev.jem.offlinegit.data.storage
 
+import dev.jem.offlinegit.domain.BranchDownloadJob
+import dev.jem.offlinegit.domain.BranchDownloadJobStatus
 import dev.jem.offlinegit.domain.DataError
 import dev.jem.offlinegit.domain.EmptyResult
 import dev.jem.offlinegit.domain.GithubAccount
@@ -158,6 +160,28 @@ class SqlDelightRepositoryStore(
         )
     }
 
+    override suspend fun upsertDownloadJob(job: BranchDownloadJob): EmptyResult<DataError.Local> = localResult {
+        queries.upsertDownloadJob(
+            id = job.id,
+            repositoryId = job.repositoryId,
+            branchName = job.branchName,
+            status = job.status.name,
+            progress = job.progress,
+            errorMessage = job.errorMessage,
+        )
+    }
+
+    override suspend fun getDownloadJob(
+        repositoryId: Long,
+        branchName: String,
+    ): Result<BranchDownloadJob?, DataError.Local> = localResult {
+        queries.selectDownloadJobForBranch(
+            repositoryId = repositoryId,
+            branchName = branchName,
+        ).executeAsOneOrNull()
+            ?.toBranchDownloadJob()
+    }
+
     private inline fun <T> localResult(block: () -> T): Result<T, DataError.Local> = try {
         Result.Success(block())
     } catch (e: Exception) {
@@ -199,5 +223,14 @@ class SqlDelightRepositoryStore(
         patch = null,
         oldBlobSha = oldBlobSha,
         newBlobSha = newBlobSha,
+    )
+
+    private fun DownloadJob.toBranchDownloadJob(): BranchDownloadJob = BranchDownloadJob(
+        id = id,
+        repositoryId = repositoryId,
+        branchName = branchName,
+        status = BranchDownloadJobStatus.valueOf(status),
+        progress = progress,
+        errorMessage = errorMessage,
     )
 }

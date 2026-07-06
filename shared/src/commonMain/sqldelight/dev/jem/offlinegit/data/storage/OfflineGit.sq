@@ -148,3 +148,19 @@ INSERT OR REPLACE INTO CommitFile(
     newBlobSha
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectDownloadJobForBranch:
+SELECT * FROM DownloadJob
+WHERE repositoryId = ? AND branchName = ?
+LIMIT 1;
+
+upsertDownloadJob:
+INSERT OR REPLACE INTO DownloadJob(
+    id,
+    repositoryId,
+    branchName,
+    status,
+    progress,
+    errorMessage
+)
+VALUES (?, ?, ?, ?, ?, ?);

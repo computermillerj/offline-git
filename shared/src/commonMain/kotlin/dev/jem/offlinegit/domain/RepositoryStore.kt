@@ -31,4 +31,11 @@ interface RepositoryStore {
     ): EmptyResult<DataError.Local>
 
     suspend fun getCommitDetails(sha: String): Result<GithubCommitDetails, DataError.Local>
+
+    suspend fun upsertDownloadJob(job: BranchDownloadJob): EmptyResult<DataError.Local>
+
+    suspend fun getDownloadJob(
+        repositoryId: Long,
+        branchName: String,
+    ): Result<BranchDownloadJob?, DataError.Local>
 }

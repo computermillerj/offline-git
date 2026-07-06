@@ -1,6 +1,8 @@
 package dev.jem.offlinegit.data.storage
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import dev.jem.offlinegit.domain.BranchDownloadJob
+import dev.jem.offlinegit.domain.BranchDownloadJobStatus
 import dev.jem.offlinegit.domain.DataError
 import dev.jem.offlinegit.domain.GithubBranch
 import dev.jem.offlinegit.domain.GithubCommitDetails
@@ -74,6 +76,37 @@ class SqlDelightRepositoryStoreTest {
         assertEquals(
             expected = Result.Success(details.copy(files = details.files.map { it.copy(patch = null) })),
             actual = store.getCommitDetails("commit-sha"),
+        )
+    }
+
+    @Test
+    fun `persists download job state`() = runTest {
+        val store = createStore()
+        val repository = GithubRepository(
+            id = 1,
+            owner = "octo",
+            name = "hello",
+            defaultBranch = "main",
+            isPrivate = false,
+            updatedAt = null,
+        )
+        val branch = GithubBranch(name = "main", headSha = "head-sha")
+        val job = BranchDownloadJob(
+            id = "1:main",
+            repositoryId = repository.id,
+            branchName = branch.name,
+            status = BranchDownloadJobStatus.RUNNING,
+            progress = 0.5,
+            errorMessage = null,
+        )
+
+        store.upsertRepositories(listOf(repository))
+        store.upsertBranches(repositoryId = repository.id, branches = listOf(branch))
+        assertEquals(Result.Success(Unit), store.upsertDownloadJob(job))
+
+        assertEquals(
+            expected = Result.Success(job),
+            actual = store.getDownloadJob(repositoryId = repository.id, branchName = branch.name),
         )
     }
 

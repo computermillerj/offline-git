@@ -1,6 +1,8 @@
 package dev.jem.offlinegit.sync
 
 import dev.jem.offlinegit.domain.BlobStore
+import dev.jem.offlinegit.domain.BranchDownloadJob
+import dev.jem.offlinegit.domain.BranchDownloadJobStatus
 import dev.jem.offlinegit.domain.BranchDownloadProgress
 import dev.jem.offlinegit.domain.BranchDownloader
 import dev.jem.offlinegit.domain.DataError
@@ -27,6 +29,8 @@ class GithubBranchDownloader(
         commitLimit: Int,
     ): Flow<BranchDownloadProgress> = flow {
         emit(BranchDownloadProgress.Started)
+        val jobId = downloadJobId(repositoryId = repository.id, branchName = branch.name)
+        var progress = 0.0
 
         when (val result = repositoryStore.upsertRepositories(listOf(repository))) {
             is Result.Error -> {
@@ -47,6 +51,16 @@ class GithubBranchDownloader(
             }
             is Result.Success -> Unit
         }
+        repositoryStore.upsertDownloadJob(
+            BranchDownloadJob(
+                id = jobId,
+                repositoryId = repository.id,
+                branchName = branch.name,
+                status = BranchDownloadJobStatus.RUNNING,
+                progress = progress,
+                errorMessage = null,
+            ),
+        )
 
         val commits = when (
             val result = remoteDataSource.getCommits(
@@ -57,6 +71,7 @@ class GithubBranchDownloader(
             )
         ) {
             is Result.Error -> {
+                failJob(jobId = jobId, repository = repository, branch = branch, progress = progress, error = result.error)
                 emit(BranchDownloadProgress.Failed(result.error))
                 return@flow
             }
@@ -71,6 +86,7 @@ class GithubBranchDownloader(
             )
         ) {
             is Result.Error -> {
+                failJob(jobId = jobId, repository = repository, branch = branch, progress = progress, error = result.error)
                 emit(BranchDownloadProgress.Failed(result.error))
                 return@flow
             }
@@ -87,6 +103,7 @@ class GithubBranchDownloader(
                 )
             ) {
                 is Result.Error -> {
+                    failJob(jobId = jobId, repository = repository, branch = branch, progress = progress, error = result.error)
                     emit(BranchDownloadProgress.Failed(result.error))
                     return@flow
                 }
@@ -102,11 +119,23 @@ class GithubBranchDownloader(
                 )
             ) {
                 is Result.Error -> {
+                    failJob(jobId = jobId, repository = repository, branch = branch, progress = progress, error = result.error)
                     emit(BranchDownloadProgress.Failed(result.error))
                     return@flow
                 }
                 is Result.Success -> Unit
             }
+            progress = (index + 1).toDouble() / commits.size
+            repositoryStore.upsertDownloadJob(
+                BranchDownloadJob(
+                    id = jobId,
+                    repositoryId = repository.id,
+                    branchName = branch.name,
+                    status = BranchDownloadJobStatus.RUNNING,
+                    progress = progress,
+                    errorMessage = null,
+                ),
+            )
             emit(
                 BranchDownloadProgress.CommitStored(
                     sha = commit.sha,
@@ -116,7 +145,36 @@ class GithubBranchDownloader(
             )
         }
 
+        repositoryStore.upsertDownloadJob(
+            BranchDownloadJob(
+                id = jobId,
+                repositoryId = repository.id,
+                branchName = branch.name,
+                status = BranchDownloadJobStatus.COMPLETED,
+                progress = 1.0,
+                errorMessage = null,
+            ),
+        )
         emit(BranchDownloadProgress.Completed)
+    }
+
+    private suspend fun failJob(
+        jobId: String,
+        repository: GithubRepository,
+        branch: GithubBranch,
+        progress: Double,
+        error: DataError,
+    ) {
+        repositoryStore.upsertDownloadJob(
+            BranchDownloadJob(
+                id = jobId,
+                repositoryId = repository.id,
+                branchName = branch.name,
+                status = BranchDownloadJobStatus.FAILED,
+                progress = progress,
+                errorMessage = error.toString(),
+            ),
+        )
     }
 
     private suspend fun storeCommitDetails(
@@ -171,6 +229,11 @@ class GithubBranchDownloader(
             is Result.Success -> Result.Success(Unit)
         }
     }
+
+    private fun downloadJobId(
+        repositoryId: Long,
+        branchName: String,
+    ): String = "$repositoryId:$branchName"
 
     private inline fun <T, E : DataError> Result<T, E>.onError(
         block: (E) -> Unit,

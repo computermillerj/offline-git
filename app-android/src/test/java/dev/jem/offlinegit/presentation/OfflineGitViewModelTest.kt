@@ -1,5 +1,6 @@
 package dev.jem.offlinegit.presentation
 
+import dev.jem.offlinegit.domain.BranchDownloadJob
 import dev.jem.offlinegit.domain.BranchDownloadProgress
 import dev.jem.offlinegit.domain.BranchDownloader
 import dev.jem.offlinegit.domain.DataError
@@ -153,6 +154,13 @@ class OfflineGitViewModelTest {
 
         override suspend fun getCommitDetails(sha: String): Result<GithubCommitDetails, DataError.Local> =
             details[sha]?.let { Result.Success(it) } ?: Result.Error(DataError.Local.NOT_FOUND)
+
+        override suspend fun upsertDownloadJob(job: BranchDownloadJob): EmptyResult<DataError.Local> = Result.Success(Unit)
+
+        override suspend fun getDownloadJob(
+            repositoryId: Long,
+            branchName: String,
+        ): Result<BranchDownloadJob?, DataError.Local> = Result.Success(null)
     }
 
     private class FakeGithubRemoteDataSource(
