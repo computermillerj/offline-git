@@ -18,6 +18,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -78,7 +80,17 @@ fun OfflineGitScreen(
             Header(
                 isLoading = state.isLoading,
                 error = state.error,
+                syncStatus = state.syncStatus,
                 onRetryClick = { onAction(OfflineGitAction.OnRetryClick) },
+            )
+        }
+        item {
+            GithubSyncCard(
+                token = state.githubToken,
+                hasRepository = state.selectedRepositoryId != null,
+                hasBranch = state.selectedBranchName != null,
+                isLoading = state.isLoading,
+                onAction = onAction,
             )
         }
         item {
@@ -151,6 +163,7 @@ fun OfflineGitScreen(
 private fun Header(
     isLoading: Boolean,
     error: String?,
+    syncStatus: String?,
     onRetryClick: () -> Unit,
 ) {
     Row(
@@ -169,6 +182,14 @@ private fun Header(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (syncStatus != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = syncStatus,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             if (error != null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
@@ -183,6 +204,52 @@ private fun Header(
         }
         if (isLoading) {
             CircularProgressIndicator()
+        }
+    }
+}
+
+@Composable
+private fun GithubSyncCard(
+    token: String,
+    hasRepository: Boolean,
+    hasBranch: Boolean,
+    isLoading: Boolean,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    SectionCard(title = "GitHub sync") {
+        OutlinedTextField(
+            value = token,
+            onValueChange = { onAction(OfflineGitAction.OnTokenChange(it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(text = "Personal access token") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                modifier = Modifier.weight(1f),
+                enabled = token.isNotBlank() && !isLoading,
+                onClick = { onAction(OfflineGitAction.OnFetchRepositoriesClick) },
+            ) {
+                Text(text = "Fetch repos")
+            }
+            Button(
+                modifier = Modifier.weight(1f),
+                enabled = token.isNotBlank() && hasRepository && !isLoading,
+                onClick = { onAction(OfflineGitAction.OnFetchBranchesClick) },
+            ) {
+                Text(text = "Fetch branches")
+            }
+        }
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            enabled = token.isNotBlank() && hasRepository && hasBranch && !isLoading,
+            onClick = { onAction(OfflineGitAction.OnDownloadBranchClick) },
+        ) {
+            Text(text = "Download selected branch")
         }
     }
 }

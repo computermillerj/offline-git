@@ -39,6 +39,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)
+    implementation(libs.ktor.client.okhttp)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

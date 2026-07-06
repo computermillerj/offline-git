@@ -1,6 +1,9 @@
 package dev.jem.offlinegit.presentation
 
+import dev.jem.offlinegit.domain.BranchDownloadProgress
+import dev.jem.offlinegit.domain.BranchDownloader
 import dev.jem.offlinegit.domain.DataError
+import dev.jem.offlinegit.domain.DiffError
 import dev.jem.offlinegit.domain.DiffFile
 import dev.jem.offlinegit.domain.DiffHunk
 import dev.jem.offlinegit.domain.DiffLine
@@ -12,12 +15,15 @@ import dev.jem.offlinegit.domain.GithubBranch
 import dev.jem.offlinegit.domain.GithubCommitDetails
 import dev.jem.offlinegit.domain.GithubCommitFile
 import dev.jem.offlinegit.domain.GithubCommitSummary
+import dev.jem.offlinegit.domain.GithubRemoteDataSource
 import dev.jem.offlinegit.domain.GithubRepository
 import dev.jem.offlinegit.domain.PatchStore
 import dev.jem.offlinegit.domain.RepositoryStore
 import dev.jem.offlinegit.domain.Result
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -46,11 +52,7 @@ class OfflineGitViewModelTest {
 
     @Test
     fun `loads seeded local repository data`() = runTest {
-        val viewModel = OfflineGitViewModel(
-            repositoryStore = FakeRepositoryStore(),
-            patchStore = FakePatchStore(),
-            diffProvider = FakeDiffProvider(),
-        )
+        val viewModel = createViewModel()
 
         val state = viewModel.state.value
 
@@ -61,6 +63,42 @@ class OfflineGitViewModelTest {
         assertEquals("README.md", state.files.single().path)
         assertNotNull(state.diff)
     }
+
+    @Test
+    fun `fetch repositories stores remote repositories`() = runTest {
+        val remoteRepository = GithubRepository(
+            id = 42,
+            owner = "octo",
+            name = "remote-repo",
+            defaultBranch = "main",
+            isPrivate = false,
+            updatedAt = null,
+        )
+        val viewModel = createViewModel(
+            remoteDataSource = FakeGithubRemoteDataSource(repositories = listOf(remoteRepository)),
+        )
+
+        viewModel.onAction(OfflineGitAction.OnTokenChange("token"))
+        viewModel.onAction(OfflineGitAction.OnFetchRepositoriesClick)
+
+        val state = viewModel.state.value
+        assertFalse(state.isLoading)
+        assertEquals("token", state.githubToken)
+        assertEquals("remote-repo", state.repositories.single().name)
+        assertEquals("Fetched 1 repositories", state.syncStatus)
+    }
+
+    private fun createViewModel(
+        repositoryStore: FakeRepositoryStore = FakeRepositoryStore(),
+        remoteDataSource: GithubRemoteDataSource = FakeGithubRemoteDataSource(),
+    ): OfflineGitViewModel = OfflineGitViewModel(
+        repositoryStore = repositoryStore,
+        patchStore = FakePatchStore(),
+        diffProvider = FakeDiffProvider(),
+        remoteDataSource = remoteDataSource,
+        branchDownloader = FakeBranchDownloader(),
+        tokenStore = MutableTokenStore(),
+    )
 
     private class FakeRepositoryStore : RepositoryStore {
         private val repositories = mutableListOf<GithubRepository>()
@@ -117,6 +155,42 @@ class OfflineGitViewModelTest {
             details[sha]?.let { Result.Success(it) } ?: Result.Error(DataError.Local.NOT_FOUND)
     }
 
+    private class FakeGithubRemoteDataSource(
+        private val repositories: List<GithubRepository> = emptyList(),
+        private val branches: List<GithubBranch> = emptyList(),
+    ) : GithubRemoteDataSource {
+        override suspend fun getAuthenticatedUser(): Result<GithubAccount, DataError.Network> = error("not used")
+
+        override suspend fun getRepositories(): Result<List<GithubRepository>, DataError.Network> =
+            Result.Success(repositories)
+
+        override suspend fun getBranches(
+            owner: String,
+            repository: String,
+        ): Result<List<GithubBranch>, DataError.Network> = Result.Success(branches)
+
+        override suspend fun getCommits(
+            owner: String,
+            repository: String,
+            branch: String,
+            limit: Int,
+        ): Result<List<GithubCommitSummary>, DataError.Network> = error("not used")
+
+        override suspend fun getCommitDetails(
+            owner: String,
+            repository: String,
+            sha: String,
+        ): Result<GithubCommitDetails, DataError.Network> = error("not used")
+    }
+
+    private class FakeBranchDownloader : BranchDownloader {
+        override fun downloadBranch(
+            repository: GithubRepository,
+            branch: GithubBranch,
+            commitLimit: Int,
+        ): Flow<BranchDownloadProgress> = emptyFlow()
+    }
+
     private class FakePatchStore : PatchStore {
         override suspend fun writePatch(
             commitSha: String,
@@ -134,7 +208,7 @@ class OfflineGitViewModelTest {
         override suspend fun getDiff(
             commitSha: String,
             file: GithubCommitFile,
-        ): Result<DiffFile, dev.jem.offlinegit.domain.DiffError> = Result.Success(
+        ): Result<DiffFile, DiffError> = Result.Success(
             DiffFile(
                 path = file.path,
                 previousPath = file.previousPath,

@@ -3,6 +3,8 @@ package dev.jem.offlinegit.presentation
 import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.jem.offlinegit.domain.BranchDownloadProgress
+import dev.jem.offlinegit.domain.BranchDownloader
 import dev.jem.offlinegit.domain.DataError
 import dev.jem.offlinegit.domain.DiffError
 import dev.jem.offlinegit.domain.DiffFile
@@ -12,10 +14,12 @@ import dev.jem.offlinegit.domain.GithubBranch
 import dev.jem.offlinegit.domain.GithubCommitDetails
 import dev.jem.offlinegit.domain.GithubCommitFile
 import dev.jem.offlinegit.domain.GithubCommitSummary
+import dev.jem.offlinegit.domain.GithubRemoteDataSource
 import dev.jem.offlinegit.domain.GithubRepository
 import dev.jem.offlinegit.domain.PatchStore
 import dev.jem.offlinegit.domain.RepositoryStore
 import dev.jem.offlinegit.domain.Result
+import dev.jem.offlinegit.domain.TokenStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -25,6 +29,10 @@ class OfflineGitViewModel(
     private val repositoryStore: RepositoryStore,
     private val patchStore: PatchStore,
     private val diffProvider: DiffProvider,
+    private val remoteDataSource: GithubRemoteDataSource,
+    private val branchDownloader: BranchDownloader,
+    private val tokenStore: MutableTokenStore,
+    private val closeRemoteResources: () -> Unit = {},
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(OfflineGitState())
@@ -34,12 +42,33 @@ class OfflineGitViewModel(
         load()
     }
 
+    override fun onCleared() {
+        closeRemoteResources()
+        super.onCleared()
+    }
+
     fun onAction(action: OfflineGitAction) {
         when (action) {
             OfflineGitAction.OnRetryClick -> load()
-            is OfflineGitAction.OnRepositoryClick -> load(repositoryId = action.repositoryId)
-            is OfflineGitAction.OnBranchClick -> load(branchName = action.branchName)
-            is OfflineGitAction.OnCommitClick -> load(commitSha = action.commitSha)
+            OfflineGitAction.OnFetchRepositoriesClick -> fetchRemoteRepositories()
+            OfflineGitAction.OnFetchBranchesClick -> fetchRemoteBranches()
+            OfflineGitAction.OnDownloadBranchClick -> downloadSelectedBranch()
+            is OfflineGitAction.OnTokenChange -> {
+                tokenStore.token = action.token
+                _state.update { it.copy(githubToken = action.token) }
+            }
+            is OfflineGitAction.OnRepositoryClick -> load(
+                repositoryId = action.repositoryId,
+                branchName = null,
+                commitSha = null,
+                filePath = null,
+            )
+            is OfflineGitAction.OnBranchClick -> load(
+                branchName = action.branchName,
+                commitSha = null,
+                filePath = null,
+            )
+            is OfflineGitAction.OnCommitClick -> load(commitSha = action.commitSha, filePath = null)
             is OfflineGitAction.OnFileClick -> load(filePath = action.path)
         }
     }
@@ -59,6 +88,94 @@ class OfflineGitViewModel(
                 commitSha = commitSha,
                 filePath = filePath,
             )
+        }
+    }
+
+    private fun fetchRemoteRepositories() {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true, error = null, syncStatus = "Fetching GitHub repositories…") }
+            val repositories = remoteDataSource.getRepositories()
+                .dataOrNull { "Unable to fetch repositories: ${it.toMessage()}" }
+                ?: return@launch
+            repositoryStore.upsertRepositories(repositories)
+                .dataOrNull { "Unable to save repositories: ${it.toMessage()}" }
+                ?: return@launch
+            _state.update { it.copy(syncStatus = "Fetched ${repositories.size} repositories") }
+            loadSelection(
+                repositoryId = repositories.firstOrNull()?.id ?: _state.value.selectedRepositoryId,
+                branchName = null,
+                commitSha = null,
+                filePath = null,
+            )
+        }
+    }
+
+    private fun fetchRemoteBranches() {
+        viewModelScope.launch {
+            val repository = selectedRepository() ?: run {
+                _state.update { it.copy(error = "Select a repository first") }
+                return@launch
+            }
+            _state.update { it.copy(isLoading = true, error = null, syncStatus = "Fetching branches for ${repository.name}…") }
+            val branches = remoteDataSource.getBranches(owner = repository.owner, repository = repository.name)
+                .dataOrNull { "Unable to fetch branches: ${it.toMessage()}" }
+                ?: return@launch
+            repositoryStore.upsertBranches(repositoryId = repository.id, branches = branches)
+                .dataOrNull { "Unable to save branches: ${it.toMessage()}" }
+                ?: return@launch
+            _state.update { it.copy(syncStatus = "Fetched ${branches.size} branches") }
+            loadSelection(
+                repositoryId = repository.id,
+                branchName = branches.firstOrNull()?.name,
+                commitSha = null,
+                filePath = null,
+            )
+        }
+    }
+
+    private fun downloadSelectedBranch() {
+        viewModelScope.launch {
+            val repository = selectedRepository() ?: run {
+                _state.update { it.copy(error = "Select a repository first") }
+                return@launch
+            }
+            val branch = selectedBranch() ?: run {
+                _state.update { it.copy(error = "Select a branch first") }
+                return@launch
+            }
+
+            branchDownloader.downloadBranch(
+                repository = repository,
+                branch = branch,
+                commitLimit = DEFAULT_COMMIT_LIMIT,
+            ).collect { progress ->
+                when (progress) {
+                    BranchDownloadProgress.Started -> _state.update {
+                        it.copy(isLoading = true, error = null, syncStatus = "Downloading ${repository.name}/${branch.name}…")
+                    }
+                    is BranchDownloadProgress.CommitsStored -> _state.update {
+                        it.copy(syncStatus = "Stored ${progress.count} commits")
+                    }
+                    is BranchDownloadProgress.CommitStored -> _state.update {
+                        it.copy(syncStatus = "Stored ${progress.completed}/${progress.total}: ${progress.sha.take(12)}")
+                    }
+                    BranchDownloadProgress.Completed -> {
+                        _state.update { it.copy(syncStatus = "Download complete") }
+                        loadSelection(
+                            repositoryId = repository.id,
+                            branchName = branch.name,
+                            commitSha = null,
+                            filePath = null,
+                        )
+                    }
+                    is BranchDownloadProgress.Failed -> _state.update {
+                        it.copy(
+                            isLoading = false,
+                            error = "Download failed: ${progress.error.toMessage()}",
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -153,6 +270,12 @@ class OfflineGitViewModel(
         )
     }
 
+    private fun selectedRepository(): GithubRepository? = _state.value.repositories
+        .firstOrNull { it.id == _state.value.selectedRepositoryId }
+
+    private fun selectedBranch(): GithubBranch? = _state.value.branches
+        .firstOrNull { it.name == _state.value.selectedBranchName }
+
     private fun <T, E : Error> Result<T, E>.dataOrNull(message: (E) -> String): T? = when (this) {
         is Result.Error -> {
             _state.update { it.copy(isLoading = false, error = message(error)) }
@@ -161,10 +284,31 @@ class OfflineGitViewModel(
         is Result.Success -> data
     }
 
+    private fun DataError.toMessage(): String = when (this) {
+        is DataError.Local -> toMessage()
+        is DataError.Network -> toMessage()
+    }
+
     private fun DataError.Local.toMessage(): String = when (this) {
         DataError.Local.DISK_FULL -> "disk is full"
         DataError.Local.NOT_FOUND -> "item not found"
         DataError.Local.UNKNOWN -> "local storage error"
+    }
+
+    private fun DataError.Network.toMessage(): String = when (this) {
+        DataError.Network.BAD_REQUEST -> "bad request"
+        DataError.Network.REQUEST_TIMEOUT -> "request timed out"
+        DataError.Network.UNAUTHORIZED -> "missing or invalid token"
+        DataError.Network.FORBIDDEN -> "forbidden"
+        DataError.Network.NOT_FOUND -> "not found"
+        DataError.Network.CONFLICT -> "request conflict"
+        DataError.Network.TOO_MANY_REQUESTS -> "GitHub rate limit reached"
+        DataError.Network.NO_INTERNET -> "no internet connection"
+        DataError.Network.PAYLOAD_TOO_LARGE -> "payload too large"
+        DataError.Network.SERVER_ERROR -> "GitHub server error"
+        DataError.Network.SERVICE_UNAVAILABLE -> "GitHub unavailable"
+        DataError.Network.SERIALIZATION -> "unexpected GitHub response"
+        DataError.Network.UNKNOWN -> "network error"
     }
 
     private fun DiffError.toMessage(): String = when (this) {
@@ -173,6 +317,7 @@ class OfflineGitViewModel(
     }
 
     private companion object {
+        const val DEFAULT_COMMIT_LIMIT = 25
         val DEMO_REPOSITORY = GithubRepository(
             id = 1,
             owner = "octocat",
@@ -222,6 +367,12 @@ class OfflineGitViewModel(
     }
 }
 
+class MutableTokenStore : TokenStore {
+    var token: String = ""
+
+    override suspend fun getToken(): String? = token
+}
+
 @Stable
 data class OfflineGitState(
     val repositories: List<GithubRepository> = emptyList(),
@@ -233,12 +384,18 @@ data class OfflineGitState(
     val files: List<GithubCommitFile> = emptyList(),
     val selectedFilePath: String? = null,
     val diff: DiffFile? = null,
+    val githubToken: String = "",
+    val syncStatus: String? = null,
     val isLoading: Boolean = true,
     val error: String? = null,
 )
 
 sealed interface OfflineGitAction {
     data object OnRetryClick : OfflineGitAction
+    data object OnFetchRepositoriesClick : OfflineGitAction
+    data object OnFetchBranchesClick : OfflineGitAction
+    data object OnDownloadBranchClick : OfflineGitAction
+    data class OnTokenChange(val token: String) : OfflineGitAction
     data class OnRepositoryClick(val repositoryId: Long) : OfflineGitAction
     data class OnBranchClick(val branchName: String) : OfflineGitAction
     data class OnCommitClick(val commitSha: String) : OfflineGitAction
