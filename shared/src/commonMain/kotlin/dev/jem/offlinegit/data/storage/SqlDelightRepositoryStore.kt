@@ -135,8 +135,8 @@ class SqlDelightRepositoryStore(
                     additions = file.additions.toLong(),
                     deletions = file.deletions.toLong(),
                     patchId = file.patch?.let { file.path },
-                    oldBlobSha = null,
-                    newBlobSha = file.blobSha,
+                    oldBlobSha = file.oldBlobSha,
+                    newBlobSha = file.newBlobSha,
                 )
             }
         }
@@ -197,5 +197,7 @@ class SqlDelightRepositoryStore(
         deletions = deletions.toInt(),
         blobSha = newBlobSha,
         patch = null,
+        oldBlobSha = oldBlobSha,
+        newBlobSha = newBlobSha,
     )
 }

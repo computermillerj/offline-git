@@ -18,4 +18,6 @@ data class GithubCommitFile(
     val deletions: Int,
     val blobSha: String?,
     val patch: String?,
+    val oldBlobSha: String? = null,
+    val newBlobSha: String? = blobSha,
 )
