@@ -1,0 +1,390 @@
+<title>Offline GitHub Viewer — UI Preview</title>
+<style>
+  :root {
+    --page-bg: #f3f5f8;
+    --page-ink: #1c2530;
+    --page-muted: #5b6875;
+    --page-line: #d9dfe6;
+    --card-bg: #ffffff;
+    --accent: #2f6fd0;
+
+    /* app screens are intentionally single-theme (dark dev-tool) */
+    --app-bg: #12161b;
+    --app-panel: #1a2027;
+    --app-panel-2: #212a33;
+    --app-line: #2b353f;
+    --app-ink: #dde5ec;
+    --app-muted: #8b98a5;
+    --app-accent: #4f9cf7;
+    --add: #3fb950;
+    --add-bg: rgba(63, 185, 80, 0.13);
+    --del: #f0564f;
+    --del-bg: rgba(240, 86, 79, 0.12);
+    --hunk-bg: rgba(79, 156, 247, 0.10);
+    --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", "Roboto Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page-bg: #0d1117;
+      --page-ink: #dbe4ec;
+      --page-muted: #909dab;
+      --page-line: #232c36;
+      --card-bg: #141a21;
+      --accent: #6aa5ee;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page-bg: #0d1117; --page-ink: #dbe4ec; --page-muted: #909dab;
+    --page-line: #232c36; --card-bg: #141a21; --accent: #6aa5ee;
+  }
+  :root[data-theme="light"] {
+    --page-bg: #f3f5f8; --page-ink: #1c2530; --page-muted: #5b6875;
+    --page-line: #d9dfe6; --card-bg: #ffffff; --accent: #2f6fd0;
+  }
+
+  body {
+    background: var(--page-bg);
+    color: var(--page-ink);
+    font-family: Roboto, system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5;
+    margin: 0;
+    padding: 48px 24px 72px;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; }
+
+  header.intro { max-width: 68ch; margin-bottom: 40px; }
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin: 0 0 10px;
+  }
+  h1 { font-size: 28px; font-weight: 600; margin: 0 0 10px; text-wrap: balance; }
+  .intro p { color: var(--page-muted); margin: 0; font-size: 15px; }
+
+  .flow {
+    display: flex; flex-wrap: wrap; gap: 32px 24px;
+    justify-content: flex-start; margin-bottom: 56px;
+  }
+  figure.shot { margin: 0; width: 300px; display: flex; flex-direction: column; gap: 12px; }
+  figure.wide { width: 100%; max-width: 980px; }
+  figcaption { order: -1; }
+  figcaption .step {
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; display: block; margin-bottom: 2px;
+  }
+  figcaption .cap { font-size: 13px; color: var(--page-muted); display: block; }
+
+  /* ---------- device frames ---------- */
+  .phone, .tablet {
+    background: var(--app-bg); color: var(--app-ink);
+    border: 1px solid var(--page-line);
+    border-radius: 26px; overflow: hidden;
+    box-shadow: 0 12px 32px rgba(10, 16, 24, 0.18);
+    font-size: 13px;
+  }
+  .phone { height: 620px; display: flex; flex-direction: column; }
+  .tablet { height: 560px; display: flex; flex-direction: column; }
+
+  .statusbar {
+    display: flex; justify-content: space-between;
+    padding: 8px 18px 4px; font-size: 11px; color: var(--app-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .appbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; border-bottom: 1px solid var(--app-line);
+  }
+  .appbar .back { color: var(--app-muted); font-size: 16px; line-height: 1; }
+  .appbar .t { font-weight: 600; font-size: 15px; }
+  .appbar .sub { font-size: 11px; color: var(--app-muted); margin-top: 1px; }
+  .appbar .spacer { flex: 1; }
+  .screen { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--app-line); border-radius: 999px;
+    padding: 2px 9px; font-size: 10.5px; color: var(--app-muted);
+    background: var(--app-panel); white-space: nowrap;
+  }
+  .chip.ok { color: var(--add); border-color: rgba(63,185,80,.4); }
+  .chip.acc { color: var(--app-accent); border-color: rgba(79,156,247,.4); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  .search {
+    margin: 12px 16px 4px; padding: 8px 14px;
+    background: var(--app-panel); border-radius: 22px;
+    color: var(--app-muted); font-size: 12.5px;
+  }
+  .list { padding: 6px 0; overflow: hidden; }
+  .row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 16px; border-bottom: 1px solid var(--app-line);
+  }
+  .row:last-child { border-bottom: 0; }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px; color: #0e1218;
+  }
+  .row .body { flex: 1; min-width: 0; }
+  .row .name { font-weight: 600; font-size: 13.5px; }
+  .row .meta { font-size: 11px; color: var(--app-muted); margin-top: 2px; }
+  .mono { font-family: var(--mono); }
+  .fab {
+    align-self: flex-end; margin: auto 18px 18px 0;
+    background: var(--app-accent); color: #0b1320; font-weight: 600;
+    border-radius: 14px; padding: 12px 18px; font-size: 13px;
+    box-shadow: 0 6px 18px rgba(79,156,247,.35);
+  }
+
+  /* branch / download sheet */
+  .sheet {
+    margin-top: auto; background: var(--app-panel);
+    border-top: 1px solid var(--app-line);
+    border-radius: 18px 18px 0 0; padding: 14px 16px 18px;
+  }
+  .sheet h4 { margin: 0 0 10px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--app-muted); }
+  .seg { display: flex; gap: 8px; margin-bottom: 12px; }
+  .seg span {
+    flex: 1; text-align: center; padding: 7px 0; border-radius: 9px;
+    border: 1px solid var(--app-line); font-size: 12.5px; color: var(--app-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .seg .on { background: rgba(79,156,247,.16); border-color: var(--app-accent); color: var(--app-accent); font-weight: 600; }
+  .optline { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; padding: 6px 0; }
+  .toggle { width: 34px; height: 18px; border-radius: 9px; background: var(--app-accent); position: relative; flex-shrink: 0; }
+  .toggle::after { content: ""; position: absolute; right: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: #0e1218; }
+  .progress { margin-top: 10px; }
+  .bar { height: 6px; border-radius: 3px; background: var(--app-panel-2); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 62%; background: var(--app-accent); }
+  .progress .lbl { display: flex; justify-content: space-between; font-size: 11px; color: var(--app-muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+
+  /* commit detail */
+  .commitmsg { padding: 12px 16px; border-bottom: 1px solid var(--app-line); }
+  .commitmsg .m { font-weight: 600; font-size: 13.5px; }
+  .commitmsg .by { font-size: 11px; color: var(--app-muted); margin-top: 3px; }
+  .filerow { display: flex; align-items: center; gap: 9px; padding: 9px 16px; border-bottom: 1px solid var(--app-line); font-size: 12px; }
+  .st { width: 18px; height: 18px; border-radius: 5px; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .st.m { background: rgba(79,156,247,.18); color: var(--app-accent); }
+  .st.a { background: rgba(63,185,80,.18); color: var(--add); }
+  .st.r { background: rgba(200,148,255,.18); color: #c894ff; }
+  .filerow .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+  .counts { font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .counts .p { color: var(--add); } .counts .n { color: var(--del); }
+
+  /* diff */
+  .diff { font-family: var(--mono); font-size: 10.8px; line-height: 1.75; overflow: hidden; flex: 1; }
+  .diff .dhead {
+    display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+    background: var(--app-panel); border-top: 1px solid var(--app-line);
+    border-bottom: 1px solid var(--app-line);
+    font-family: Roboto, system-ui, sans-serif; font-size: 11px;
+  }
+  .dline { display: flex; white-space: pre; }
+  .dline .no {
+    width: 26px; flex-shrink: 0; text-align: right; padding-right: 6px;
+    color: #56616c; user-select: none; font-variant-numeric: tabular-nums;
+  }
+  .dline .tx { flex: 1; padding-left: 6px; overflow: hidden; }
+  .dline.add { background: var(--add-bg); } .dline.add .tx { color: #b7e6b0; }
+  .dline.del { background: var(--del-bg); } .dline.del .tx { color: #f2b8b5; }
+  .dline.ctx .tx { color: var(--app-ink); }
+  .dline.hunk { background: var(--hunk-bg); }
+  .dline.hunk .tx { color: var(--app-accent); }
+  .kw { color: #cf8ee9; } .str { color: #e8bf6a; } .fn { color: #7cc4f8; } .cm { color: #6a737d; }
+
+  /* tablet two-pane */
+  .panes { display: flex; flex: 1; min-height: 0; }
+  .pane-l { width: 250px; flex-shrink: 0; border-right: 1px solid var(--app-line); overflow: hidden; display: flex; flex-direction: column; }
+  .pane-l .sect { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--app-muted); padding: 10px 14px 4px; }
+  .tree { font-family: var(--mono); font-size: 11px; padding: 2px 14px 8px; color: var(--app-muted); line-height: 1.9; }
+  .tree .sel { color: var(--app-accent); }
+  .pane-r { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .sbs { display: flex; flex: 1; min-height: 0; font-family: var(--mono); font-size: 10.8px; line-height: 1.75; }
+  .sbs .col { flex: 1; min-width: 0; overflow: hidden; }
+  .sbs .col + .col { border-left: 1px solid var(--app-line); }
+  .crow { padding: 10px 14px; border-bottom: 1px solid var(--app-line); font-size: 12px; }
+  .crow.sel { background: rgba(79,156,247,.12); border-left: 2px solid var(--app-accent); }
+  .crow .cm2 { font-weight: 600; font-size: 12px; }
+  .crow .cs { font-family: var(--mono); font-size: 10.5px; color: var(--app-muted); margin-top: 2px; }
+
+  .notes { max-width: 68ch; border-top: 1px solid var(--page-line); padding-top: 24px; }
+  .notes h2 { font-size: 15px; margin: 0 0 8px; }
+  .notes p { font-size: 13.5px; color: var(--page-muted); margin: 0 0 8px; }
+  @media (max-width: 700px) { figure.shot { width: 100%; max-width: 340px; } }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <p class="eyebrow">Offline GitHub Viewer · UI preview</p>
+    <h1>What the app looks like if PLAN.md is built as written</h1>
+    <p>Android-first, dark dev-tool theme per the "Android Studio-like coloring" goal. Phones use
+    list-to-detail navigation; the wide frame at the bottom is the later tablet/desktop two-pane
+    mode. Every element maps to a plan section — nothing shown here is outside MVP scope except
+    the final frame.</p>
+  </header>
+
+  <div class="flow">
+
+    <!-- 1. Repositories -->
+    <figure class="shot">
+      <figcaption>
+        <span class="step">1 · Repository picker</span>
+        <span class="cap">GET /user/repos, paginated and stored locally. Downloaded repos are marked.</span>
+      </figcaption>
+      <div class="phone">
+        <div class="statusbar"><span>11:28</span><span>▲ ▽ ▪ 87%</span></div>
+        <div class="appbar"><div><div class="t">Repositories</div><div class="sub">computermillerj · 14 repos</div></div><div class="spacer"></div><span class="chip ok"><span class="dot"></span>Offline ready</span></div>
+        <div class="screen">
+          <div class="search">Search repositories…</div>
+          <div class="list">
+            <div class="row"><div class="avatar" style="background:#7cc4f8">O</div><div class="body"><div class="name">offline-github-viewer <span class="chip acc">downloaded</span></div><div class="meta">main · updated 2h ago</div></div></div>
+            <div class="row"><div class="avatar" style="background:#b7e6b0">D</div><div class="body"><div class="name">DataScoutV2 <span class="chip">private</span></div><div class="meta">develop · updated yesterday</div></div></div>
+            <div class="row"><div class="avatar" style="background:#e8bf6a">S</div><div class="body"><div class="name">SermonSchedule</div><div class="meta">main · updated 3d ago</div></div></div>
+            <div class="row"><div class="avatar" style="background:#cf8ee9">W</div><div class="body"><div class="name">WorkoutElite <span class="chip">private</span></div><div class="meta">main · updated 1w ago</div></div></div>
+            <div class="row"><div class="avatar" style="background:#f2b8b5">S</div><div class="body"><div class="name">spoc-web</div><div class="meta">master · updated 2w ago</div></div></div>
+          </div>
+          <div class="fab">Connect account</div>
+        </div>
+      </div>
+    </figure>
+
+    <!-- 2. Branch + download -->
+    <figure class="shot">
+      <figcaption>
+        <span class="step">2 · Branch &amp; download options</span>
+        <span class="cap">Branch HEADs from the API; tarball snapshot + commit depth; resumable DownloadJob progress.</span>
+      </figcaption>
+      <div class="phone">
+        <div class="statusbar"><span>11:29</span><span>▲ ▽ ▪ 87%</span></div>
+        <div class="appbar"><span class="back">←</span><div><div class="t">offline-github-viewer</div><div class="sub">Choose a branch to download</div></div></div>
+        <div class="screen">
+          <div class="list">
+            <div class="row"><div class="body"><div class="name">main <span class="chip acc">default</span></div><div class="meta mono">HEAD 8f3d21a</div></div><span class="chip ok"><span class="dot"></span>selected</span></div>
+            <div class="row"><div class="body"><div class="name">diff-parser</div><div class="meta mono">HEAD 5b90c47</div></div></div>
+            <div class="row"><div class="body"><div class="name">sync-resume</div><div class="meta mono">HEAD c2a11f0</div></div></div>
+          </div>
+          <div class="sheet">
+            <h4>Download options</h4>
+            <div class="seg"><span>50</span><span class="on">100 commits</span><span>250</span></div>
+            <div class="optline"><span>Skip binary &amp; LFS files</span><span class="toggle"></span></div>
+            <div class="optline"><span>Cache blobs for side-by-side diff</span><span class="toggle"></span></div>
+            <div class="progress">
+              <div class="bar"><i></i></div>
+              <div class="lbl"><span>Downloading blobs · 412/660 (deduped by SHA)</span><span>62%</span></div>
+              <div class="lbl"><span>Tarball snapshot done · resumable if interrupted</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </figure>
+
+    <!-- 3. Commit list -->
+    <figure class="shot">
+      <figcaption>
+        <span class="step">3 · Commit list (offline)</span>
+        <span class="cap">Reads only local SQLite. Merge commits are labeled first-parent per the data-ownership rule.</span>
+      </figcaption>
+      <div class="phone">
+        <div class="statusbar"><span>13:04</span><span>✈ ▪ 81%</span></div>
+        <div class="appbar"><span class="back">←</span><div><div class="t">main</div><div class="sub">offline-github-viewer · 100 commits</div></div><div class="spacer"></div><span class="chip ok"><span class="dot"></span>Offline · Jul 6</span></div>
+        <div class="screen">
+          <div class="list">
+            <div class="row"><div class="avatar" style="background:#7cc4f8">J</div><div class="body"><div class="name">Fall back to blob diff when patch is truncated</div><div class="meta mono">8f3d21a · jem · 2h ago · <span style="color:var(--add)">+38</span> <span style="color:var(--del)">−9</span></div></div></div>
+            <div class="row"><div class="avatar" style="background:#8b98a5">M</div><div class="body"><div class="name">Merge pull request #12 from jem/diff-parser <span class="chip">merge · first-parent</span></div><div class="meta mono">e71bd02 · jem · 5h ago</div></div></div>
+            <div class="row"><div class="avatar" style="background:#7cc4f8">J</div><div class="body"><div class="name">Parse hunk headers and no-newline markers</div><div class="meta mono">5b90c47 · jem · 6h ago · <span style="color:var(--add)">+214</span> <span style="color:var(--del)">−31</span></div></div></div>
+            <div class="row"><div class="avatar" style="background:#7cc4f8">J</div><div class="body"><div class="name">Cache blobs by SHA in OkioBlobStore</div><div class="meta mono">c2a11f0 · jem · yesterday · <span style="color:var(--add)">+96</span> <span style="color:var(--del)">−4</span></div></div></div>
+            <div class="row"><div class="avatar" style="background:#7cc4f8">J</div><div class="body"><div class="name">Add BranchDownloader progress reporting</div><div class="meta mono">91acf33 · jem · yesterday · <span style="color:var(--add)">+142</span> <span style="color:var(--del)">−18</span></div></div></div>
+            <div class="row"><div class="avatar" style="background:#7cc4f8">J</div><div class="body"><div class="name">SQLDelight schema: Commit keyed by SHA + BranchCommit</div><div class="meta mono">40d9e8b · jem · 2d ago · <span style="color:var(--add)">+87</span> <span style="color:var(--del)">−52</span></div></div></div>
+          </div>
+        </div>
+      </div>
+    </figure>
+
+    <!-- 4. Diff viewer -->
+    <figure class="shot">
+      <figcaption>
+        <span class="step">4 · Unified diff viewer</span>
+        <span class="cap">DiffProvider output: file list with status chips, then colored hunks with dual line numbers. Source chip shows which provider served it.</span>
+      </figcaption>
+      <div class="phone">
+        <div class="statusbar"><span>13:05</span><span>✈ ▪ 81%</span></div>
+        <div class="appbar"><span class="back">←</span><div><div class="t mono" style="font-size:13px">8f3d21a</div><div class="sub">3 files changed</div></div><div class="spacer"></div><span class="chip">unified</span></div>
+        <div class="screen">
+          <div class="commitmsg"><div class="m">Fall back to blob diff when patch is truncated</div><div class="by">jem · computermillerj@gmail.com · Jul 6, 11:02</div></div>
+          <div class="filerow"><span class="st m">M</span><span class="path">diff/DiffProviderChain.kt</span><span class="counts"><span class="p">+24</span> <span class="n">−6</span></span></div>
+          <div class="filerow" style="opacity:.55"><span class="st a">A</span><span class="path">diff/LocalBlobDiffProvider.kt</span><span class="counts"><span class="p">+14</span> <span class="n">−0</span></span></div>
+          <div class="filerow" style="opacity:.55"><span class="st r">R</span><span class="path">diff/UnifiedParser.kt → diff/UnifiedDiffParser.kt</span><span class="counts"><span class="p">+0</span> <span class="n">−3</span></span></div>
+          <div class="diff">
+            <div class="dhead"><span class="mono" style="color:var(--app-accent)">DiffProviderChain.kt</span><div class="spacer" style="flex:1"></div><span class="chip acc">source: cached patch</span></div>
+            <div class="dline hunk"><span class="no"></span><span class="no"></span><span class="tx">@@ -24,7 +24,11 @@ class DiffProviderChain(</span></div>
+            <div class="dline ctx"><span class="no">24</span><span class="no">24</span><span class="tx">    <span class="kw">override suspend fun</span> <span class="fn">diffFor</span>(file: CommitFile): DiffFile {</span></div>
+            <div class="dline del"><span class="no">25</span><span class="no"></span><span class="tx">        <span class="kw">return</span> patchProvider.<span class="fn">diffFor</span>(file)</span></div>
+            <div class="dline add"><span class="no"></span><span class="no">25</span><span class="tx">        <span class="kw">val</span> patch = patchProvider.<span class="fn">diffFor</span>(file)</span></div>
+            <div class="dline add"><span class="no"></span><span class="no">26</span><span class="tx">        <span class="kw">if</span> (!patch.isTruncated) <span class="kw">return</span> patch</span></div>
+            <div class="dline add"><span class="no"></span><span class="no">27</span><span class="tx">        <span class="cm">// GitHub omits patches for large commits</span></span></div>
+            <div class="dline add"><span class="no"></span><span class="no">28</span><span class="tx">        <span class="kw">return</span> blobProvider.<span class="fn">diffFor</span>(file)</span></div>
+            <div class="dline ctx"><span class="no">26</span><span class="no">29</span><span class="tx">    }</span></div>
+            <div class="dline ctx"><span class="no">27</span><span class="no">30</span><span class="tx">}</span></div>
+          </div>
+        </div>
+      </div>
+    </figure>
+
+    <!-- Tablet two-pane -->
+    <figure class="shot wide">
+      <figcaption>
+        <span class="step">Later · Milestone 7 — tablet / desktop two-pane with side-by-side mode</span>
+        <span class="cap">Left pane: commits and file tree. Right pane: side-by-side diff, available because both blobs were cached during download.</span>
+      </figcaption>
+      <div class="tablet">
+        <div class="statusbar"><span>13:07</span><span>✈ ▪ 80%</span></div>
+        <div class="appbar"><div><div class="t">offline-github-viewer · main</div></div><div class="spacer"></div><span class="chip">unified</span><span class="chip acc">side-by-side</span><span class="chip ok"><span class="dot"></span>Offline</span></div>
+        <div class="panes">
+          <div class="pane-l">
+            <div class="sect">Commits</div>
+            <div class="crow sel"><div class="cm2">Fall back to blob diff when patch is truncated</div><div class="cs">8f3d21a · 2h ago</div></div>
+            <div class="crow"><div class="cm2" style="font-weight:400;color:var(--app-muted)">Merge pull request #12…</div><div class="cs">e71bd02 · 5h ago</div></div>
+            <div class="sect">Files · 3 changed</div>
+            <div class="tree">▾ diff/<br>&nbsp;&nbsp;<span class="sel">M DiffProviderChain.kt</span><br>&nbsp;&nbsp;A LocalBlobDiffProvider.kt<br>&nbsp;&nbsp;R UnifiedDiffParser.kt</div>
+          </div>
+          <div class="pane-r">
+            <div class="dhead" style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--app-panel);border-bottom:1px solid var(--app-line);font-size:11px"><span class="mono" style="color:var(--app-accent)">DiffProviderChain.kt</span><div style="flex:1"></div><span class="chip acc">source: local blob diff</span></div>
+            <div class="sbs">
+              <div class="col">
+                <div class="dline hunk"><span class="no"></span><span class="tx">@@ -24,7</span></div>
+                <div class="dline ctx"><span class="no">24</span><span class="tx">    <span class="kw">override suspend fun</span> <span class="fn">diffFor</span>(file: CommitFile): DiffFile {</span></div>
+                <div class="dline del"><span class="no">25</span><span class="tx">        <span class="kw">return</span> patchProvider.<span class="fn">diffFor</span>(file)</span></div>
+                <div class="dline ctx"><span class="no"></span><span class="tx"></span></div>
+                <div class="dline ctx"><span class="no"></span><span class="tx"></span></div>
+                <div class="dline ctx"><span class="no"></span><span class="tx"></span></div>
+                <div class="dline ctx"><span class="no">26</span><span class="tx">    }</span></div>
+                <div class="dline ctx"><span class="no">27</span><span class="tx">}</span></div>
+              </div>
+              <div class="col">
+                <div class="dline hunk"><span class="no"></span><span class="tx">@@ +24,11</span></div>
+                <div class="dline ctx"><span class="no">24</span><span class="tx">    <span class="kw">override suspend fun</span> <span class="fn">diffFor</span>(file: CommitFile): DiffFile {</span></div>
+                <div class="dline add"><span class="no">25</span><span class="tx">        <span class="kw">val</span> patch = patchProvider.<span class="fn">diffFor</span>(file)</span></div>
+                <div class="dline add"><span class="no">26</span><span class="tx">        <span class="kw">if</span> (!patch.isTruncated) <span class="kw">return</span> patch</span></div>
+                <div class="dline add"><span class="no">27</span><span class="tx">        <span class="cm">// GitHub omits patches for large commits</span></span></div>
+                <div class="dline add"><span class="no">28</span><span class="tx">        <span class="kw">return</span> blobProvider.<span class="fn">diffFor</span>(file)</span></div>
+                <div class="dline ctx"><span class="no">29</span><span class="tx">    }</span></div>
+                <div class="dline ctx"><span class="no">30</span><span class="tx">}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </figure>
+  </div>
+
+  <div class="notes">
+    <h2>Deliberately absent, per the plan's non-goals</h2>
+    <p>No editing, no commit creation, no review comments or approvals, no syntax highlighting
+    beyond diff coloring (the token colors shown in the diff are the later milestone-7 polish —
+    the MVP renders plain text in green/red/context). Binary and LFS files would appear in the
+    file list marked "unsupported" instead of rendering.</p>
+    <p>The "source" chip in the diff header is the <span class="mono">DiffProvider</span> boundary
+    made visible: "cached patch" = GithubPatchDiffProvider, "local blob diff" = LocalBlobDiffProvider
+    fallback for truncated or missing patches.</p>
+  </div>
+</div>

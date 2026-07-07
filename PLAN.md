@@ -8,7 +8,8 @@ Primary UI target: Android. On phones the flow is list-to-detail navigation (rep
 
 ## Current implementation status
 
-Last updated: 2026-07-06. Latest implementation commit: `1a9b59c Cache HEAD snapshot tarball`.
+Last updated: 2026-07-06. Latest implementation commit: `9e6a66d Add GitHub device auth`.
+Status verified against the code on 2026-07-06; `:shared:jvmTest`, `:app-android:testDebugUnitTest`, and `:app-android:compileDebugKotlin` pass.
 
 Implemented:
 
@@ -20,15 +21,146 @@ Implemented:
 - Tarball snapshot indexing that handles GitHub gzipped tarballs, strips archive root paths, skips binary blobs for snapshot caching, and computes Git blob SHA-1 values locally.
 - Diff pipeline with cached GitHub patch rendering first and local blob-based fallback when patches are missing.
 - Android UI for token entry, repository and branch loading, branch download, local repository/commit/file browsing, diff rendering, and download status display.
-- Real Android viewer UI with phone list-to-detail navigation, larger-screen two-pane layout, unified and side-by-side diff modes, colors, line numbers, and paired side-by-side scrolling.
+- Android viewer UI with phone list-to-detail navigation, larger-screen two-pane layout, unified and side-by-side diff modes, colors, line numbers, and row-aligned side-by-side lines. (Alignment comes from rendering each old/new pair in one row; side-by-side mode has no horizontal scrolling — long lines clip. Unified hunks scroll horizontally per hunk card.)
 - GitHub Device Flow sign-in, Android Keystore-backed encrypted token storage, sign-out, sync refresh controls, commit-limit control for large repositories, and clearer error banners.
 - Unit tests for API calls, auth, storage, branch downloads, tarball indexing, diff parsing/providers, and the Android ViewModel.
 
-Still to improve:
+Still to improve (shared/data layer):
 
 - Use persisted `DownloadJob` state to resume or skip already-completed branch downloads instead of only recording status.
 - Improve old-blob SHA resolution for modified files so local blob fallback works more often across commit history.
 - Add a desktop Compose target if desktop support becomes wanted.
+
+### UI changes still needed to match the mockups
+
+The generated mockups live at `docs/mockups/offline-github-viewer-preview.html` (copied from the
+design session; open in a browser). The current milestone-7 UI is functionally complete but is a
+generic Material light-theme form/card layout, not the dark dev-tool design in the mockups. Gaps,
+roughly in priority order:
+
+1. **Theme.** Mockups use a single dark dev-tool theme ("Android Studio-like coloring" per the
+   goal). The app uses default `MaterialTheme` (light) with no `darkColorScheme`, and diff
+   colors are hard-coded light pastels in `OfflineGitScreen.kt` (`0xFFE6F4EA` add / `0xFFFFEBEE`
+   delete). Define a dark color scheme and diff palette (dark panel background, green/red line
+   tints, accent hunk headers) instead of the hard-coded light values.
+2. **Screen chrome.** Mockups show a `TopAppBar` per screen with title + subtitle (e.g.
+   "Repositories / login · N repos", "main / repo · 100 commits"), a back arrow, and status chips
+   ("Offline ready", "Offline · Jul 6", "unified"/"side-by-side"). The app has no
+   Scaffold/TopAppBar — headers are text rows inside the scrolling list and back is an outlined
+   "Back" button.
+3. **Auth as a separate flow.** Mockups put sign-in behind a "Connect account" FAB; browsing
+   screens contain no auth widgets. The app renders the full "GitHub sync" card (OAuth client-ID
+   field, PAT field, commit-limit field, five buttons) inline at the top of the repositories,
+   branches, and commits panes. Move device sign-in/token entry to a dedicated connect
+   screen/sheet and leave only compact sync/refresh affordances in the browsing flow.
+4. **Repository picker.** Missing vs mockup: search field, avatar/initial tiles, "downloaded"
+   and "private" chips, and "default branch · updated 2h ago" metadata (`updatedAt` is stored
+   but never displayed; downloaded state is derivable from `DownloadJob`/`Branch.downloadedAt`).
+5. **Branch picker + download options.** Mockups show a "default" chip on the default branch,
+   mono HEAD SHA, and a bottom sheet with a commit-depth segmented control (50/100/250), toggles
+   (skip binary/LFS, cache blobs for side-by-side), a linear progress bar, and blob-count text.
+   The app has a free-text commit-limit field, a text-only progress line ("Download running:
+   62%"), and no progress bar or options sheet.
+6. **Commit list rows.** Mockups show avatar initials, relative time, colored `+adds −dels`
+   per commit, and a "merge · first-parent" chip on merge commits. The app shows message +
+   "author • sha12" only. (Per-commit totals need additions/deletions summed from `CommitFile`
+   or stored on `Commit`; merge detection needs more than `firstParentSha` — store parent count.)
+7. **Commit detail / changed files.** Mockups show a commit message block (author · email ·
+   date) above the file list, and file rows with colored square status chips (M/A/R), mono
+   paths, and colored `+/−` counts. The app renders plain rows with a text subtitle
+   ("+2 -1 • modified") and never shows the commit message/author on the files or diff screens.
+8. **Diff source chip.** Mockups surface the `DiffProvider` boundary as a "source: cached patch"
+   vs "source: local blob diff" chip in the diff header. `DiffFile` has no source field and
+   `FallbackDiffProvider` discards which provider answered — add a source to the diff result and
+   display it.
+9. **Two-pane layout.** Mockups' left pane is commits + a changed-file tree with section labels;
+   the right pane is the diff. The app's left pane is the entire phone stack (sync card + four
+   section cards). Slim the left pane to commit/file navigation and move sync elsewhere.
+10. **Diff polish.** Side-by-side has no horizontal scrolling (long lines clip) and unified mode
+    scrolls per hunk card instead of the whole file; mockups treat the diff as one continuous
+    surface. Later items already planned: collapsed unchanged sections, in-file search, syntax
+    highlighting (mockup token colors are explicitly milestone-7+ polish, not MVP).
+
+Non-visual mismatch found during the same audit: the app's default commit download limit is 25;
+the plan and mockups say 100.
+
+### Multi-account support (planned)
+
+Goal: multiple signed-in GitHub accounts at once, each with its own token and repository list,
+with an account switcher and no sign-out required to change identity. Audited 2026-07-06 against
+`9e6a66d`; the single-account assumption lives in exactly three places — the token store, the
+remote data source wiring, and the missing account→repository link. Everything below
+`Repository` (branches, commits, `BranchCommit`, `CommitFile`, `DownloadJob`, blob/patch caches)
+hangs off `repositoryId` or content SHAs and needs no change.
+
+Work items, in dependency order:
+
+1. **Schema: account→repository junction + first migration.**
+   - `Account(id, login, avatarUrl)` already exists with `upsertAccount`/`selectAccounts`
+     queries, but nothing calls them today (`getAuthenticatedUser()` is implemented and never
+     invoked either).
+   - `Repository` is keyed by GitHub's global repo id, so a repo visible to two accounts stays
+     one row. Add a junction table instead of an `accountId` column:
+
+     ```sql
+     CREATE TABLE AccountRepository (
+         accountId INTEGER NOT NULL,
+         repositoryId INTEGER NOT NULL,
+         PRIMARY KEY(accountId, repositoryId),
+         FOREIGN KEY(accountId) REFERENCES Account(id) ON DELETE CASCADE,
+         FOREIGN KEY(repositoryId) REFERENCES Repository(id) ON DELETE CASCADE
+     );
+     ```
+
+   - Add `selectRepositoriesForAccount(accountId)`; write junction rows when a repo fetch
+     succeeds. Track the active account via a `lastUsedAt` column or a preference.
+   - This is the project's first SQLDelight migration — bump the schema version and add a
+     migration file so `AndroidSqliteDriver` does not destroy existing data.
+
+2. **Account-scoped token storage.**
+   - Replace the singleton-token `TokenStore`/`WritableTokenStore` API with account-scoped
+     calls: `getToken(accountId)`, `saveToken(accountId, token)`, `clearToken(accountId)`.
+   - `AndroidEncryptedTokenStore` hardcodes one preference entry; move to per-account entries
+     (one Keystore key can encrypt all of them — the alias does not need to vary).
+   - Chicken-and-egg: the account id is only known after calling `/user` with the token, so
+     sign-in becomes: obtain token → `getAuthenticatedUser()` → `upsertAccount` → save token
+     under that account id.
+
+3. **Per-account session factory in DI.**
+   - `KtorGithubRemoteDataSource` takes a `TokenStore` at construction and
+     `GithubBranchDownloader` wraps it. Build a factory
+     `(accountId) -> GithubRemoteDataSource + BranchDownloader` sharing one `HttpClient`,
+     rather than threading `accountId` through every method signature.
+   - `OfflineGitViewModelFactory` provides the factory; the ViewModel resolves the graph for
+     the active account per remote operation. `KtorGithubDeviceAuthDataSource` is unchanged
+     (it mints tokens before an account exists).
+
+4. **Auth-flow account registration.**
+   - Both the device flow and the PAT field currently save the token blindly; finish each flow
+     by calling `/user` and registering the account, then set it active.
+   - Sign-out becomes per-account: delete that account's token and junction rows, but only
+     delete `Repository` rows no other account references (consistent with the "never delete
+     offline data" rule).
+
+5. **UI: account switcher and per-account repo list.**
+   - `OfflineGitState` gains `accounts: List<GithubAccount>` and `activeAccountId`, with
+     add/switch/remove actions.
+   - Dovetails with the mockup-gap work above: the mockup's repo-picker app bar already shows
+     the account login, and the "Connect account" flow is the entry point for adding a second
+     account.
+
+6. **Tests.** Account-scoped token store (Android side), junction-table queries and the
+   migration, account registration during auth, and ViewModel switch-account behavior.
+
+Design decisions taken:
+
+- **Shared offline cache across accounts.** Keep the SHA-keyed dedup — two accounts that can
+  both see a repo share its commits and blobs, and each token gets its own 5,000/hour rate
+  limit. Visibility is enforced through the junction table: an account only navigates to repos
+  it actually listed. (Per-account databases would isolate completely but duplicate storage and
+  API spend, and make "one repo, two accounts" awkward.)
+- **Whose token for shared repos:** always the active account's token; a 404 on a repo only the
+  other account can reach surfaces as the normal permission error.
 
 Validation currently passes with:
 

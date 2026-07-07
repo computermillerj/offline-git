@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -25,11 +26,16 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -98,124 +104,214 @@ fun OfflineGitScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PhoneOfflineGitScreen(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Header(
-                isLoading = state.isLoading,
+    Scaffold(
+        topBar = { PhoneTopBar(state = state, onAction = onAction) },
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { contentPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            statusStripItem(
                 error = state.error,
                 syncStatus = state.syncStatus,
                 onRetryClick = { onAction(OfflineGitAction.OnRetryClick) },
             )
-        }
-        when (state.phonePane) {
-            PhonePane.REPOSITORIES -> {
-                item {
-                    GithubSyncCard(
-                        state = state,
-                        onAction = onAction,
-                    )
-                }
-                item {
-                    RepositorySection(
-                        state = state,
-                        onAction = onAction,
-                    )
-                }
-            }
-            PhonePane.BRANCHES -> {
-                item {
-                    PhoneBackHeader(
-                        title = "Branches",
-                        subtitle = state.selectedRepositoryLabel(),
-                        onBackClick = { onAction(OfflineGitAction.OnPhoneBackClick) },
-                    )
-                }
-                item {
-                    GithubSyncCard(
-                        state = state,
-                        onAction = onAction,
-                    )
-                }
-                item {
-                    BranchSection(
-                        state = state,
-                        onAction = onAction,
-                    )
-                }
-            }
-            PhonePane.COMMITS -> {
-                item {
-                    PhoneBackHeader(
-                        title = "Commits",
-                        subtitle = state.selectedBranchLabel(),
-                        onBackClick = { onAction(OfflineGitAction.OnPhoneBackClick) },
-                    )
-                }
-                item {
-                    GithubSyncCard(
-                        state = state,
-                        onAction = onAction,
-                    )
-                }
-                item {
-                    CommitSection(
-                        state = state,
-                        onAction = onAction,
-                    )
-                }
-            }
-            PhonePane.FILES -> {
-                item {
-                    PhoneBackHeader(
-                        title = "Changed files",
-                        subtitle = state.selectedCommitLabel(),
-                        onBackClick = { onAction(OfflineGitAction.OnPhoneBackClick) },
-                    )
-                }
-                item {
-                    ChangedFilesSection(
-                        state = state,
-                        onAction = onAction,
-                    )
-                }
-            }
-            PhonePane.DIFF -> {
-                item {
-                    PhoneBackHeader(
-                        title = "Diff",
-                        subtitle = state.selectedFilePath.orEmpty(),
-                        onBackClick = { onAction(OfflineGitAction.OnPhoneBackClick) },
-                    )
-                }
-                val diff = state.diff
-                if (diff == null) {
-                    item { EmptyDiffCard() }
-                } else {
+            when (state.phonePane) {
+                PhonePane.REPOSITORIES -> {
                     item {
-                        DiffViewerHeader(
-                            diff = diff,
-                            selectedFile = state.selectedFile(),
-                            viewerMode = state.viewerMode,
+                        GithubSyncCard(
+                            state = state,
                             onAction = onAction,
                         )
                     }
-                    diffItems(
-                        diff = diff,
-                        viewerMode = state.viewerMode,
-                    )
+                    item {
+                        RepositorySection(
+                            state = state,
+                            onAction = onAction,
+                        )
+                    }
+                }
+                PhonePane.BRANCHES -> {
+                    item {
+                        GithubSyncCard(
+                            state = state,
+                            onAction = onAction,
+                        )
+                    }
+                    item {
+                        BranchSection(
+                            state = state,
+                            onAction = onAction,
+                        )
+                    }
+                }
+                PhonePane.COMMITS -> {
+                    item {
+                        GithubSyncCard(
+                            state = state,
+                            onAction = onAction,
+                        )
+                    }
+                    item {
+                        CommitSection(
+                            state = state,
+                            onAction = onAction,
+                        )
+                    }
+                }
+                PhonePane.FILES -> {
+                    item {
+                        ChangedFilesSection(
+                            state = state,
+                            onAction = onAction,
+                        )
+                    }
+                }
+                PhonePane.DIFF -> {
+                    val diff = state.diff
+                    if (diff == null) {
+                        item { EmptyDiffCard() }
+                    } else {
+                        item {
+                            DiffViewerHeader(
+                                diff = diff,
+                                selectedFile = state.selectedFile(),
+                                viewerMode = state.viewerMode,
+                                onAction = onAction,
+                            )
+                        }
+                        diffItems(
+                            diff = diff,
+                            viewerMode = state.viewerMode,
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PhoneTopBar(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    val onBack = { onAction(OfflineGitAction.OnPhoneBackClick) }
+    when (state.phonePane) {
+        PhonePane.REPOSITORIES -> OfflineGitTopBar(
+            title = "Repositories",
+            subtitle = state.repositoriesSubtitle(),
+            isLoading = state.isLoading,
+            actions = { StatusChip("Offline ready", ChipStyle.OK, showDot = true) },
+        )
+        PhonePane.BRANCHES -> OfflineGitTopBar(
+            title = state.selectedRepositoryName(),
+            subtitle = "Choose a branch to download",
+            onBackClick = onBack,
+            isLoading = state.isLoading,
+        )
+        PhonePane.COMMITS -> OfflineGitTopBar(
+            title = state.selectedBranchName ?: "Commits",
+            subtitle = state.commitsSubtitle(),
+            onBackClick = onBack,
+            isLoading = state.isLoading,
+            actions = state.offlineChip(),
+        )
+        PhonePane.FILES -> OfflineGitTopBar(
+            title = state.selectedCommitSha?.take(7) ?: "Changed files",
+            titleMono = state.selectedCommitSha != null,
+            subtitle = "${state.files.size} files changed",
+            onBackClick = onBack,
+            isLoading = state.isLoading,
+            actions = state.offlineChip(),
+        )
+        PhonePane.DIFF -> OfflineGitTopBar(
+            title = state.selectedFilePath?.substringAfterLast('/') ?: "Diff",
+            titleMono = true,
+            subtitle = state.selectedFilePath.orEmpty(),
+            onBackClick = onBack,
+            isLoading = state.isLoading,
+            actions = { StatusChip(state.viewerMode.label(), ChipStyle.ACCENT) },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OfflineGitTopBar(
+    title: String,
+    subtitle: String,
+    onBackClick: (() -> Unit)? = null,
+    titleMono: Boolean = false,
+    isLoading: Boolean = false,
+    actions: @Composable () -> Unit = {},
+) {
+    TopAppBar(
+        title = {
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = if (titleMono) FontFamily.Monospace else FontFamily.Default,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        },
+        navigationIcon = {
+            if (onBackClick != null) {
+                IconButton(onClick = onBackClick) {
+                    Text(
+                        text = "←",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        actions = {
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .padding(end = 12.dp)
+                        .size(18.dp),
+                    strokeWidth = 2.dp,
+                )
+            }
+            actions()
+            Spacer(modifier = Modifier.width(8.dp))
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.background,
+            titleContentColor = MaterialTheme.colorScheme.onBackground,
+        ),
+    )
+}
+
+private fun DiffViewerMode.label(): String = when (this) {
+    DiffViewerMode.UNIFIED -> "unified"
+    DiffViewerMode.SIDE_BY_SIDE -> "side-by-side"
 }
 
 @Composable
@@ -429,35 +525,26 @@ private fun ErrorBanner(
     }
 }
 
-@Composable
-private fun PhoneBackHeader(
-    title: String,
-    subtitle: String,
-    onBackClick: () -> Unit,
+private fun LazyListScope.statusStripItem(
+    error: String?,
+    syncStatus: String?,
+    onRetryClick: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        OutlinedButton(onClick = onBackClick) {
-            Text(text = "Back")
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+    if (error != null) {
+        item {
+            ErrorBanner(
+                message = error,
+                onRetryClick = onRetryClick,
             )
-            if (subtitle.isNotBlank()) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+        }
+    }
+    if (syncStatus != null) {
+        item {
+            Text(
+                text = syncStatus,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }
@@ -1109,29 +1196,29 @@ private fun DiffFile.subtitle(selectedFile: GithubCommitFile?): String = buildLi
 
 private fun OfflineGitState.selectedFile(): GithubCommitFile? = files.firstOrNull { it.path == selectedFilePath }
 
-private fun OfflineGitState.selectedRepositoryLabel(): String = repositories
+private fun OfflineGitState.selectedRepository(): GithubRepository? = repositories
     .firstOrNull { it.id == selectedRepositoryId }
-    ?.let { "${it.owner}/${it.name}" }
-    .orEmpty()
 
-private fun OfflineGitState.selectedBranchLabel(): String = listOf(
-    selectedRepositoryLabel(),
-    selectedBranchName.orEmpty(),
+private fun OfflineGitState.selectedRepositoryName(): String = selectedRepository()?.name ?: "Repository"
+
+private fun OfflineGitState.repositoriesSubtitle(): String =
+    "${repositories.size} ${if (repositories.size == 1) "repo" else "repos"}"
+
+private fun OfflineGitState.commitsSubtitle(): String = listOf(
+    selectedRepository()?.name.orEmpty(),
+    "${commits.size} commits",
 )
     .filter { it.isNotBlank() }
-    .joinToString(" • ")
+    .joinToString(" · ")
 
-private fun OfflineGitState.selectedCommitLabel(): String = commits
-    .firstOrNull { it.sha == selectedCommitSha }
-    ?.let { commit ->
-        listOf(
-            commit.message.lineSequence().firstOrNull().orEmpty(),
-            commit.sha.take(12),
-        )
-            .filter { it.isNotBlank() }
-            .joinToString(" • ")
+private fun OfflineGitState.isOffline(): Boolean =
+    downloadJob?.status == BranchDownloadJobStatus.COMPLETED || commits.isNotEmpty()
+
+private fun OfflineGitState.offlineChip(): @Composable () -> Unit = {
+    if (isOffline()) {
+        StatusChip("Offline", ChipStyle.OK, showDot = true)
     }
-    .orEmpty()
+}
 
 private fun BranchDownloadJob.statusText(): String = when (status) {
     BranchDownloadJobStatus.RUNNING -> "Download running: ${(progress * 100).toInt()}%"
