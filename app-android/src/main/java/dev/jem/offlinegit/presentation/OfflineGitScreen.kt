@@ -65,7 +65,7 @@ fun OfflineGitRoot(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    MaterialTheme {
+    OfflineGitTheme {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
@@ -1009,26 +1009,24 @@ private fun SideBySideCell(
     }
 }
 
-@Composable
 private fun DiffLineType?.backgroundColor(): Color = when (this) {
-    DiffLineType.ADDITION -> Color(0xFFE6F4EA)
-    DiffLineType.DELETION -> Color(0xFFFFEBEE)
-    DiffLineType.HUNK_HEADER -> MaterialTheme.colorScheme.tertiaryContainer
+    DiffLineType.ADDITION -> DiffPalette.AdditionBackground
+    DiffLineType.DELETION -> DiffPalette.DeletionBackground
+    DiffLineType.HUNK_HEADER -> DiffPalette.HunkBackground
     DiffLineType.CONTEXT,
     DiffLineType.NO_NEWLINE,
     null,
     -> Color.Transparent
 }
 
-@Composable
 private fun DiffLineType?.textColor(): Color = when (this) {
-    DiffLineType.ADDITION -> Color(0xFF1E7F37)
-    DiffLineType.DELETION -> Color(0xFFB42318)
-    DiffLineType.HUNK_HEADER -> MaterialTheme.colorScheme.onTertiaryContainer
+    DiffLineType.ADDITION -> DiffPalette.AdditionText
+    DiffLineType.DELETION -> DiffPalette.DeletionText
+    DiffLineType.HUNK_HEADER -> DiffPalette.HunkText
     DiffLineType.CONTEXT,
     DiffLineType.NO_NEWLINE,
     null,
-    -> MaterialTheme.colorScheme.onSurface
+    -> DiffPalette.ContextText
 }
 
 private fun DiffLine.prefix(): String = type.prefix()
@@ -1153,7 +1151,7 @@ private data class SideBySideDiffRow(
 @Preview(showBackground = true)
 @Composable
 private fun OfflineGitScreenPreview() {
-    MaterialTheme {
+    OfflineGitTheme {
         OfflineGitScreen(
             state = previewState(),
             onAction = {},
@@ -1164,7 +1162,7 @@ private fun OfflineGitScreenPreview() {
 @Preview(showBackground = true, widthDp = 1000, heightDp = 700)
 @Composable
 private fun WideOfflineGitScreenPreview() {
-    MaterialTheme {
+    OfflineGitTheme {
         OfflineGitScreen(
             state = previewState().copy(viewerMode = DiffViewerMode.SIDE_BY_SIDE),
             onAction = {},
