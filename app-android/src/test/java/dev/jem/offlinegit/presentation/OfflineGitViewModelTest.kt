@@ -12,8 +12,12 @@ import dev.jem.offlinegit.domain.DiffLine
 import dev.jem.offlinegit.domain.DiffLineType
 import dev.jem.offlinegit.domain.DiffProvider
 import dev.jem.offlinegit.domain.EmptyResult
+import dev.jem.offlinegit.domain.GithubAccessToken
 import dev.jem.offlinegit.domain.GithubAccount
 import dev.jem.offlinegit.domain.GithubBranch
+import dev.jem.offlinegit.domain.GithubDeviceAuthDataSource
+import dev.jem.offlinegit.domain.GithubDeviceAuthError
+import dev.jem.offlinegit.domain.GithubDeviceCode
 import dev.jem.offlinegit.domain.GithubCommitDetails
 import dev.jem.offlinegit.domain.GithubCommitFile
 import dev.jem.offlinegit.domain.GithubCommitSummary
@@ -27,6 +31,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -145,6 +150,31 @@ class OfflineGitViewModelTest {
     }
 
     @Test
+    fun `device auth saves token and fetches repositories`() = runTest {
+        val remoteRepository = GithubRepository(
+            id = 43,
+            owner = "octo",
+            name = "device-repo",
+            defaultBranch = "main",
+            isPrivate = false,
+            updatedAt = null,
+        )
+        val tokenStore = MutableTokenStore()
+        val viewModel = createViewModel(
+            remoteDataSource = FakeGithubRemoteDataSource(repositories = listOf(remoteRepository)),
+            tokenStore = tokenStore,
+        )
+
+        viewModel.onAction(OfflineGitAction.OnAuthClientIdChange("client-id"))
+        viewModel.onAction(OfflineGitAction.OnStartDeviceAuthClick)
+        advanceUntilIdle()
+
+        assertEquals("token", tokenStore.token)
+        assertEquals(true, viewModel.state.value.hasToken)
+        assertEquals("device-repo", viewModel.state.value.repositories.single().name)
+    }
+
+    @Test
     fun `fetch repositories stores remote repositories`() = runTest {
         val remoteRepository = GithubRepository(
             id = 42,
@@ -163,7 +193,8 @@ class OfflineGitViewModelTest {
 
         val state = viewModel.state.value
         assertFalse(state.isLoading)
-        assertEquals("token", state.githubToken)
+        assertEquals("", state.githubToken)
+        assertEquals(true, state.hasToken)
         assertEquals("remote-repo", state.repositories.single().name)
         assertEquals("Fetched 1 repositories", state.syncStatus)
     }
@@ -171,13 +202,16 @@ class OfflineGitViewModelTest {
     private fun createViewModel(
         repositoryStore: FakeRepositoryStore = FakeRepositoryStore(),
         remoteDataSource: GithubRemoteDataSource = FakeGithubRemoteDataSource(),
+        authDataSource: GithubDeviceAuthDataSource = FakeGithubDeviceAuthDataSource(),
+        tokenStore: MutableTokenStore = MutableTokenStore(),
     ): OfflineGitViewModel = OfflineGitViewModel(
         repositoryStore = repositoryStore,
         patchStore = FakePatchStore(),
         diffProvider = FakeDiffProvider(),
         remoteDataSource = remoteDataSource,
+        authDataSource = authDataSource,
         branchDownloader = FakeBranchDownloader(),
-        tokenStore = MutableTokenStore(),
+        tokenStore = tokenStore,
     )
 
     private class FakeRepositoryStore : RepositoryStore {
@@ -286,6 +320,23 @@ class OfflineGitViewModelTest {
             repository: String,
             ref: String,
         ): Result<ByteArray, DataError.Network> = error("not used")
+    }
+
+    private class FakeGithubDeviceAuthDataSource : GithubDeviceAuthDataSource {
+        override suspend fun createDeviceCode(clientId: String): Result<GithubDeviceCode, DataError.Network> = Result.Success(
+            GithubDeviceCode(
+                deviceCode = "device-code",
+                userCode = "USER-CODE",
+                verificationUri = "https://github.com/login/device",
+                expiresInSeconds = 900,
+                intervalSeconds = 5,
+            ),
+        )
+
+        override suspend fun pollAccessToken(
+            clientId: String,
+            deviceCode: String,
+        ): Result<GithubAccessToken, GithubDeviceAuthError> = Result.Success(GithubAccessToken(accessToken = "token"))
     }
 
     private class FakeBranchDownloader : BranchDownloader {

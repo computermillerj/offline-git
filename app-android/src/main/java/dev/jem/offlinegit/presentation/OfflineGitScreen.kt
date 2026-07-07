@@ -120,11 +120,7 @@ private fun PhoneOfflineGitScreen(
             PhonePane.REPOSITORIES -> {
                 item {
                     GithubSyncCard(
-                        token = state.githubToken,
-                        hasRepository = state.selectedRepositoryId != null,
-                        hasBranch = state.selectedBranchName != null,
-                        isLoading = state.isLoading,
-                        downloadJob = state.downloadJob,
+                        state = state,
                         onAction = onAction,
                     )
                 }
@@ -145,11 +141,7 @@ private fun PhoneOfflineGitScreen(
                 }
                 item {
                     GithubSyncCard(
-                        token = state.githubToken,
-                        hasRepository = state.selectedRepositoryId != null,
-                        hasBranch = state.selectedBranchName != null,
-                        isLoading = state.isLoading,
-                        downloadJob = state.downloadJob,
+                        state = state,
                         onAction = onAction,
                     )
                 }
@@ -170,11 +162,7 @@ private fun PhoneOfflineGitScreen(
                 }
                 item {
                     GithubSyncCard(
-                        token = state.githubToken,
-                        hasRepository = state.selectedRepositoryId != null,
-                        hasBranch = state.selectedBranchName != null,
-                        isLoading = state.isLoading,
-                        downloadJob = state.downloadJob,
+                        state = state,
                         onAction = onAction,
                     )
                 }
@@ -279,11 +267,7 @@ private fun LazyListScope.navigationItems(
     }
     item {
         GithubSyncCard(
-            token = state.githubToken,
-            hasRepository = state.selectedRepositoryId != null,
-            hasBranch = state.selectedBranchName != null,
-            isLoading = state.isLoading,
-            downloadJob = state.downloadJob,
+            state = state,
             onAction = onAction,
         )
     }
@@ -402,18 +386,45 @@ private fun Header(
             }
             if (error != null) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = error,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
+                ErrorBanner(
+                    message = error,
+                    onRetryClick = onRetryClick,
                 )
-                Button(onClick = onRetryClick) {
-                    Text(text = "Retry")
-                }
             }
         }
         if (isLoading) {
             CircularProgressIndicator()
+        }
+    }
+}
+
+@Composable
+private fun ErrorBanner(
+    message: String,
+    onRetryClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "Something went wrong",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            OutlinedButton(onClick = onRetryClick) {
+                Text(text = "Retry")
+            }
         }
     }
 }
@@ -453,21 +464,25 @@ private fun PhoneBackHeader(
 
 @Composable
 private fun GithubSyncCard(
-    token: String,
-    hasRepository: Boolean,
-    hasBranch: Boolean,
-    isLoading: Boolean,
-    downloadJob: BranchDownloadJob?,
+    state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
 ) {
+    val hasUsableToken = state.hasToken || state.githubToken.isNotBlank()
     SectionCard(title = "GitHub sync") {
+        if (state.hasToken) {
+            Text(
+                text = "GitHub token saved securely",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         OutlinedTextField(
-            value = token,
-            onValueChange = { onAction(OfflineGitAction.OnTokenChange(it)) },
+            value = state.authClientId,
+            onValueChange = { onAction(OfflineGitAction.OnAuthClientIdChange(it)) },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text(text = "Personal access token") },
+            label = { Text(text = "GitHub OAuth client ID") },
             singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
+            enabled = !state.isAuthPolling,
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -475,27 +490,81 @@ private fun GithubSyncCard(
         ) {
             Button(
                 modifier = Modifier.weight(1f),
-                enabled = token.isNotBlank() && !isLoading,
+                enabled = state.authClientId.isNotBlank() && !state.isAuthPolling && !state.isLoading,
+                onClick = { onAction(OfflineGitAction.OnStartDeviceAuthClick) },
+            ) {
+                Text(text = "Device sign in")
+            }
+            OutlinedButton(
+                modifier = Modifier.weight(1f),
+                enabled = state.isAuthPolling,
+                onClick = { onAction(OfflineGitAction.OnCancelDeviceAuthClick) },
+            ) {
+                Text(text = "Cancel")
+            }
+        }
+        if (state.deviceUserCode != null && state.deviceVerificationUri != null) {
+            DeviceCodeCard(
+                userCode = state.deviceUserCode,
+                verificationUri = state.deviceVerificationUri,
+            )
+        }
+        state.authMessage?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedTextField(
+            value = state.githubToken,
+            onValueChange = { onAction(OfflineGitAction.OnTokenChange(it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(text = "Personal access token fallback") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+        )
+        OutlinedTextField(
+            value = state.commitLimitText,
+            onValueChange = { onAction(OfflineGitAction.OnCommitLimitChange(it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(text = "Commit download limit") },
+            singleLine = true,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                modifier = Modifier.weight(1f),
+                enabled = hasUsableToken && !state.isLoading,
                 onClick = { onAction(OfflineGitAction.OnFetchRepositoriesClick) },
             ) {
-                Text(text = "Fetch repos")
+                Text(text = "Refresh repos")
             }
             Button(
                 modifier = Modifier.weight(1f),
-                enabled = token.isNotBlank() && hasRepository && !isLoading,
+                enabled = hasUsableToken && state.selectedRepositoryId != null && !state.isLoading,
                 onClick = { onAction(OfflineGitAction.OnFetchBranchesClick) },
             ) {
-                Text(text = "Fetch branches")
+                Text(text = "Refresh branches")
             }
         }
         Button(
             modifier = Modifier.fillMaxWidth(),
-            enabled = token.isNotBlank() && hasRepository && hasBranch && !isLoading,
+            enabled = hasUsableToken && state.selectedRepositoryId != null && state.selectedBranchName != null && !state.isLoading,
             onClick = { onAction(OfflineGitAction.OnDownloadBranchClick) },
         ) {
-            Text(text = "Download selected branch")
+            Text(text = "Download / refresh selected branch")
         }
-        if (downloadJob != null) {
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth(),
+            enabled = state.hasToken && !state.isLoading,
+            onClick = { onAction(OfflineGitAction.OnSignOutClick) },
+        ) {
+            Text(text = "Sign out")
+        }
+        state.downloadJob?.let { downloadJob ->
             Text(
                 text = downloadJob.statusText(),
                 style = MaterialTheme.typography.bodySmall,
@@ -504,6 +573,34 @@ private fun GithubSyncCard(
                     BranchDownloadJobStatus.FAILED -> MaterialTheme.colorScheme.error
                     BranchDownloadJobStatus.RUNNING -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeviceCodeCard(
+    userCode: String,
+    verificationUri: String,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = userCode,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+            )
+            Text(
+                text = verificationUri,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }
     }

@@ -11,6 +11,9 @@ import dev.jem.offlinegit.domain.DiffError
 import dev.jem.offlinegit.domain.DiffFile
 import dev.jem.offlinegit.domain.DiffProvider
 import dev.jem.offlinegit.domain.Error
+import dev.jem.offlinegit.domain.GithubDeviceAuthDataSource
+import dev.jem.offlinegit.domain.GithubDeviceAuthError
+import dev.jem.offlinegit.domain.GithubDeviceCode
 import dev.jem.offlinegit.domain.GithubBranch
 import dev.jem.offlinegit.domain.GithubCommitDetails
 import dev.jem.offlinegit.domain.GithubCommitFile
@@ -20,7 +23,9 @@ import dev.jem.offlinegit.domain.GithubRepository
 import dev.jem.offlinegit.domain.PatchStore
 import dev.jem.offlinegit.domain.RepositoryStore
 import dev.jem.offlinegit.domain.Result
-import dev.jem.offlinegit.domain.TokenStore
+import dev.jem.offlinegit.domain.WritableTokenStore
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -31,19 +36,23 @@ class OfflineGitViewModel(
     private val patchStore: PatchStore,
     private val diffProvider: DiffProvider,
     private val remoteDataSource: GithubRemoteDataSource,
+    private val authDataSource: GithubDeviceAuthDataSource,
     private val branchDownloader: BranchDownloader,
-    private val tokenStore: MutableTokenStore,
+    private val tokenStore: WritableTokenStore,
     private val closeRemoteResources: () -> Unit = {},
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(OfflineGitState())
     val state = _state.asStateFlow()
 
+    private var deviceAuthJob: Job? = null
+
     init {
         load()
     }
 
     override fun onCleared() {
+        deviceAuthJob?.cancel()
         closeRemoteResources()
         super.onCleared()
     }
@@ -54,11 +63,13 @@ class OfflineGitViewModel(
             OfflineGitAction.OnFetchRepositoriesClick -> fetchRemoteRepositories()
             OfflineGitAction.OnFetchBranchesClick -> fetchRemoteBranches()
             OfflineGitAction.OnDownloadBranchClick -> downloadSelectedBranch()
+            OfflineGitAction.OnStartDeviceAuthClick -> startDeviceAuth()
+            OfflineGitAction.OnCancelDeviceAuthClick -> cancelDeviceAuth()
+            OfflineGitAction.OnSignOutClick -> signOut()
             OfflineGitAction.OnPhoneBackClick -> _state.update { it.copy(phonePane = it.phonePane.previous()) }
-            is OfflineGitAction.OnTokenChange -> {
-                tokenStore.token = action.token
-                _state.update { it.copy(githubToken = action.token) }
-            }
+            is OfflineGitAction.OnTokenChange -> _state.update { it.copy(githubToken = action.token) }
+            is OfflineGitAction.OnAuthClientIdChange -> _state.update { it.copy(authClientId = action.clientId) }
+            is OfflineGitAction.OnCommitLimitChange -> _state.update { it.copy(commitLimitText = action.limit) }
             is OfflineGitAction.OnRepositoryClick -> load(
                 repositoryId = action.repositoryId,
                 branchName = null,
@@ -94,6 +105,7 @@ class OfflineGitViewModel(
     ) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
+            refreshStoredTokenState()
             seedDemoIfEmpty()
             loadSelection(
                 repositoryId = repositoryId,
@@ -107,6 +119,9 @@ class OfflineGitViewModel(
 
     private fun fetchRemoteRepositories() {
         viewModelScope.launch {
+            if (!saveEnteredTokenIfNeeded()) {
+                return@launch
+            }
             _state.update { it.copy(isLoading = true, error = null, syncStatus = "Fetching GitHub repositories…") }
             val repositories = remoteDataSource.getRepositories()
                 .dataOrNull { "Unable to fetch repositories: ${it.toMessage()}" }
@@ -127,6 +142,9 @@ class OfflineGitViewModel(
 
     private fun fetchRemoteBranches() {
         viewModelScope.launch {
+            if (!saveEnteredTokenIfNeeded()) {
+                return@launch
+            }
             val repository = selectedRepository() ?: run {
                 _state.update { it.copy(error = "Select a repository first") }
                 return@launch
@@ -151,6 +169,13 @@ class OfflineGitViewModel(
 
     private fun downloadSelectedBranch() {
         viewModelScope.launch {
+            if (!saveEnteredTokenIfNeeded()) {
+                return@launch
+            }
+            val commitLimit = _state.value.commitLimitText.toIntOrNull()?.takeIf { it in 1..MAX_COMMIT_LIMIT } ?: run {
+                _state.update { it.copy(error = "Commit limit must be between 1 and $MAX_COMMIT_LIMIT") }
+                return@launch
+            }
             val repository = selectedRepository() ?: run {
                 _state.update { it.copy(error = "Select a repository first") }
                 return@launch
@@ -163,7 +188,7 @@ class OfflineGitViewModel(
             branchDownloader.downloadBranch(
                 repository = repository,
                 branch = branch,
-                commitLimit = DEFAULT_COMMIT_LIMIT,
+                commitLimit = commitLimit,
             ).collect { progress ->
                 when (progress) {
                     BranchDownloadProgress.Started -> _state.update {
@@ -194,6 +219,156 @@ class OfflineGitViewModel(
                 }
             }
         }
+    }
+
+    private fun startDeviceAuth() {
+        val clientId = _state.value.authClientId.trim()
+        if (clientId.isBlank()) {
+            _state.update { it.copy(error = "Enter a GitHub OAuth app client ID") }
+            return
+        }
+
+        deviceAuthJob?.cancel()
+        deviceAuthJob = viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    error = null,
+                    authMessage = "Requesting device code…",
+                    isAuthPolling = true,
+                    deviceUserCode = null,
+                    deviceVerificationUri = null,
+                )
+            }
+            val deviceCode = authDataSource.createDeviceCode(clientId)
+                .dataOrNull { "Unable to start device sign-in: ${it.toMessage()}" }
+                ?: run {
+                    _state.update { it.copy(isAuthPolling = false) }
+                    return@launch
+                }
+            pollDeviceAuth(
+                clientId = clientId,
+                deviceCode = deviceCode,
+            )
+        }
+    }
+
+    private suspend fun pollDeviceAuth(
+        clientId: String,
+        deviceCode: GithubDeviceCode,
+    ) {
+        _state.update {
+            it.copy(
+                authMessage = "Open ${deviceCode.verificationUri} and enter ${deviceCode.userCode}",
+                deviceUserCode = deviceCode.userCode,
+                deviceVerificationUri = deviceCode.verificationUri,
+            )
+        }
+
+        var elapsedSeconds = 0
+        var intervalSeconds = deviceCode.intervalSeconds.coerceAtLeast(MIN_DEVICE_AUTH_INTERVAL_SECONDS)
+        while (elapsedSeconds < deviceCode.expiresInSeconds) {
+            delay(intervalSeconds * 1_000L)
+            elapsedSeconds += intervalSeconds
+            when (val result = authDataSource.pollAccessToken(clientId = clientId, deviceCode = deviceCode.deviceCode)) {
+                is Result.Success -> {
+                    tokenStore.saveToken(result.data.accessToken)
+                    val hasToken = !tokenStore.getToken().isNullOrBlank()
+                    _state.update {
+                        it.copy(
+                            githubToken = "",
+                            hasToken = hasToken,
+                            isAuthPolling = false,
+                            authMessage = if (hasToken) "Signed in with GitHub" else null,
+                            error = if (hasToken) null else "Unable to save token securely",
+                            deviceUserCode = null,
+                            deviceVerificationUri = null,
+                        )
+                    }
+                    if (hasToken) {
+                        fetchRemoteRepositories()
+                    }
+                    return
+                }
+                is Result.Error -> when (val error = result.error) {
+                    GithubDeviceAuthError.AuthorizationPending -> Unit
+                    GithubDeviceAuthError.SlowDown -> intervalSeconds += DEVICE_AUTH_SLOW_DOWN_SECONDS
+                    GithubDeviceAuthError.AccessDenied,
+                    GithubDeviceAuthError.ExpiredToken,
+                    is GithubDeviceAuthError.Network,
+                    -> {
+                        _state.update {
+                            it.copy(
+                                isAuthPolling = false,
+                                error = "GitHub sign-in failed: ${error.toMessage()}",
+                                authMessage = null,
+                            )
+                        }
+                        return
+                    }
+                }
+            }
+        }
+        _state.update {
+            it.copy(
+                isAuthPolling = false,
+                error = "GitHub sign-in expired. Start again to get a new code.",
+                authMessage = null,
+            )
+        }
+    }
+
+    private fun cancelDeviceAuth() {
+        deviceAuthJob?.cancel()
+        _state.update {
+            it.copy(
+                isAuthPolling = false,
+                authMessage = null,
+                deviceUserCode = null,
+                deviceVerificationUri = null,
+            )
+        }
+    }
+
+    private fun signOut() {
+        viewModelScope.launch {
+            deviceAuthJob?.cancel()
+            tokenStore.clearToken()
+            _state.update {
+                it.copy(
+                    githubToken = "",
+                    hasToken = false,
+                    isAuthPolling = false,
+                    authMessage = "Signed out",
+                    deviceUserCode = null,
+                    deviceVerificationUri = null,
+                )
+            }
+        }
+    }
+
+    private suspend fun saveEnteredTokenIfNeeded(): Boolean {
+        val token = _state.value.githubToken.trim()
+        if (token.isNotEmpty()) {
+            tokenStore.saveToken(token)
+            val hasToken = !tokenStore.getToken().isNullOrBlank()
+            _state.update { it.copy(githubToken = "", hasToken = hasToken, authMessage = "Token saved securely") }
+            if (!hasToken) {
+                _state.update { it.copy(error = "Unable to save token securely", isLoading = false) }
+            }
+            return hasToken
+        }
+
+        refreshStoredTokenState()
+        if (_state.value.hasToken) {
+            return true
+        }
+
+        _state.update { it.copy(error = "Enter a token or sign in with GitHub first", isLoading = false) }
+        return false
+    }
+
+    private suspend fun refreshStoredTokenState() {
+        _state.update { it.copy(hasToken = !tokenStore.getToken().isNullOrBlank()) }
     }
 
     private suspend fun loadSelection(
@@ -347,6 +522,14 @@ class OfflineGitViewModel(
         is DiffError.Storage -> error.toMessage()
     }
 
+    private fun GithubDeviceAuthError.toMessage(): String = when (this) {
+        GithubDeviceAuthError.AccessDenied -> "authorization was denied"
+        GithubDeviceAuthError.AuthorizationPending -> "authorization is still pending"
+        GithubDeviceAuthError.ExpiredToken -> "device code expired"
+        is GithubDeviceAuthError.Network -> error.toMessage()
+        GithubDeviceAuthError.SlowDown -> "GitHub asked us to poll more slowly"
+    }
+
     private fun PhonePane.previous(): PhonePane = when (this) {
         PhonePane.REPOSITORIES -> PhonePane.REPOSITORIES
         PhonePane.BRANCHES -> PhonePane.REPOSITORIES
@@ -357,6 +540,9 @@ class OfflineGitViewModel(
 
     private companion object {
         const val DEFAULT_COMMIT_LIMIT = 25
+        const val DEVICE_AUTH_SLOW_DOWN_SECONDS = 5
+        const val MAX_COMMIT_LIMIT = 500
+        const val MIN_DEVICE_AUTH_INTERVAL_SECONDS = 5
         val DEMO_REPOSITORY = GithubRepository(
             id = 1,
             owner = "octocat",
@@ -406,10 +592,18 @@ class OfflineGitViewModel(
     }
 }
 
-class MutableTokenStore : TokenStore {
+class MutableTokenStore : WritableTokenStore {
     var token: String = ""
 
     override suspend fun getToken(): String? = token
+
+    override suspend fun saveToken(token: String) {
+        this.token = token
+    }
+
+    override suspend fun clearToken() {
+        token = ""
+    }
 }
 
 @Stable
@@ -427,6 +621,13 @@ data class OfflineGitState(
     val phonePane: PhonePane = PhonePane.REPOSITORIES,
     val downloadJob: BranchDownloadJob? = null,
     val githubToken: String = "",
+    val hasToken: Boolean = false,
+    val authClientId: String = "",
+    val authMessage: String? = null,
+    val deviceUserCode: String? = null,
+    val deviceVerificationUri: String? = null,
+    val isAuthPolling: Boolean = false,
+    val commitLimitText: String = "25",
     val syncStatus: String? = null,
     val isLoading: Boolean = true,
     val error: String? = null,
@@ -437,8 +638,13 @@ sealed interface OfflineGitAction {
     data object OnFetchRepositoriesClick : OfflineGitAction
     data object OnFetchBranchesClick : OfflineGitAction
     data object OnDownloadBranchClick : OfflineGitAction
+    data object OnStartDeviceAuthClick : OfflineGitAction
+    data object OnCancelDeviceAuthClick : OfflineGitAction
+    data object OnSignOutClick : OfflineGitAction
     data object OnPhoneBackClick : OfflineGitAction
     data class OnTokenChange(val token: String) : OfflineGitAction
+    data class OnAuthClientIdChange(val clientId: String) : OfflineGitAction
+    data class OnCommitLimitChange(val limit: String) : OfflineGitAction
     data class OnRepositoryClick(val repositoryId: Long) : OfflineGitAction
     data class OnBranchClick(val branchName: String) : OfflineGitAction
     data class OnCommitClick(val commitSha: String) : OfflineGitAction

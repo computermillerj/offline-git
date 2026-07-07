@@ -3,7 +3,9 @@ package dev.jem.offlinegit.presentation
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import dev.jem.offlinegit.auth.AndroidEncryptedTokenStore
 import dev.jem.offlinegit.data.github.GithubHttpClientFactory
+import dev.jem.offlinegit.data.github.KtorGithubDeviceAuthDataSource
 import dev.jem.offlinegit.data.github.KtorGithubRemoteDataSource
 import dev.jem.offlinegit.data.storage.createAndroidBlobStore
 import dev.jem.offlinegit.data.storage.createAndroidPatchStore
@@ -26,7 +28,7 @@ class OfflineGitViewModelFactory(
             primary = GithubPatchDiffProvider(patchStore),
             fallback = LocalBlobDiffProvider(blobStore),
         )
-        val tokenStore = MutableTokenStore()
+        val tokenStore = AndroidEncryptedTokenStore(context)
         val httpClient = GithubHttpClientFactory.create(OkHttp.create())
         val remoteDataSource = KtorGithubRemoteDataSource(
             httpClient = httpClient,
@@ -37,6 +39,7 @@ class OfflineGitViewModelFactory(
             patchStore = patchStore,
             diffProvider = diffProvider,
             remoteDataSource = remoteDataSource,
+            authDataSource = KtorGithubDeviceAuthDataSource(httpClient),
             branchDownloader = GithubBranchDownloader(
                 remoteDataSource = remoteDataSource,
                 repositoryStore = repositoryStore,
