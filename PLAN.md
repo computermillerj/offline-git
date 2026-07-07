@@ -20,6 +20,7 @@ Implemented:
 - Tarball snapshot indexing that handles GitHub gzipped tarballs, strips archive root paths, skips binary blobs for snapshot caching, and computes Git blob SHA-1 values locally.
 - Diff pipeline with cached GitHub patch rendering first and local blob-based fallback when patches are missing.
 - Android UI for token entry, repository and branch loading, branch download, local repository/commit/file browsing, diff rendering, and download status display.
+- Real Android viewer UI with phone list-to-detail navigation, larger-screen two-pane layout, unified and side-by-side diff modes, colors, line numbers, and paired side-by-side scrolling.
 - Unit tests for API calls, storage, branch downloads, tarball indexing, diff parsing/providers, and the Android ViewModel.
 
 Still to improve:
@@ -27,7 +28,7 @@ Still to improve:
 - Use persisted `DownloadJob` state to resume or skip already-completed branch downloads instead of only recording status.
 - Improve old-blob SHA resolution for modified files so local blob fallback works more often across commit history.
 - Add production GitHub Device Flow auth and secure token storage.
-- Polish navigation/viewer UI, including side-by-side diff and larger-screen layouts.
+- Add a desktop Compose target if desktop support becomes wanted.
 
 Validation currently passes with:
 

@@ -2,22 +2,31 @@ package dev.jem.offlinegit.presentation
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,6 +56,8 @@ import dev.jem.offlinegit.domain.GithubCommitFile
 import dev.jem.offlinegit.domain.GithubCommitSummary
 import dev.jem.offlinegit.domain.GithubRepository
 
+private val WideLayoutBreakpoint = 840.dp
+
 @Composable
 fun OfflineGitRoot(
     viewModelFactory: ViewModelProvider.Factory,
@@ -72,10 +83,29 @@ fun OfflineGitScreen(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
 ) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        if (maxWidth >= WideLayoutBreakpoint) {
+            WideOfflineGitScreen(
+                state = state,
+                onAction = onAction,
+            )
+        } else {
+            PhoneOfflineGitScreen(
+                state = state,
+                onAction = onAction,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PhoneOfflineGitScreen(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
@@ -86,78 +116,255 @@ fun OfflineGitScreen(
                 onRetryClick = { onAction(OfflineGitAction.OnRetryClick) },
             )
         }
-        item {
-            GithubSyncCard(
-                token = state.githubToken,
-                hasRepository = state.selectedRepositoryId != null,
-                hasBranch = state.selectedBranchName != null,
-                isLoading = state.isLoading,
-                downloadJob = state.downloadJob,
+        when (state.phonePane) {
+            PhonePane.REPOSITORIES -> {
+                item {
+                    GithubSyncCard(
+                        token = state.githubToken,
+                        hasRepository = state.selectedRepositoryId != null,
+                        hasBranch = state.selectedBranchName != null,
+                        isLoading = state.isLoading,
+                        downloadJob = state.downloadJob,
+                        onAction = onAction,
+                    )
+                }
+                item {
+                    RepositorySection(
+                        state = state,
+                        onAction = onAction,
+                    )
+                }
+            }
+            PhonePane.BRANCHES -> {
+                item {
+                    PhoneBackHeader(
+                        title = "Branches",
+                        subtitle = state.selectedRepositoryLabel(),
+                        onBackClick = { onAction(OfflineGitAction.OnPhoneBackClick) },
+                    )
+                }
+                item {
+                    GithubSyncCard(
+                        token = state.githubToken,
+                        hasRepository = state.selectedRepositoryId != null,
+                        hasBranch = state.selectedBranchName != null,
+                        isLoading = state.isLoading,
+                        downloadJob = state.downloadJob,
+                        onAction = onAction,
+                    )
+                }
+                item {
+                    BranchSection(
+                        state = state,
+                        onAction = onAction,
+                    )
+                }
+            }
+            PhonePane.COMMITS -> {
+                item {
+                    PhoneBackHeader(
+                        title = "Commits",
+                        subtitle = state.selectedBranchLabel(),
+                        onBackClick = { onAction(OfflineGitAction.OnPhoneBackClick) },
+                    )
+                }
+                item {
+                    GithubSyncCard(
+                        token = state.githubToken,
+                        hasRepository = state.selectedRepositoryId != null,
+                        hasBranch = state.selectedBranchName != null,
+                        isLoading = state.isLoading,
+                        downloadJob = state.downloadJob,
+                        onAction = onAction,
+                    )
+                }
+                item {
+                    CommitSection(
+                        state = state,
+                        onAction = onAction,
+                    )
+                }
+            }
+            PhonePane.FILES -> {
+                item {
+                    PhoneBackHeader(
+                        title = "Changed files",
+                        subtitle = state.selectedCommitLabel(),
+                        onBackClick = { onAction(OfflineGitAction.OnPhoneBackClick) },
+                    )
+                }
+                item {
+                    ChangedFilesSection(
+                        state = state,
+                        onAction = onAction,
+                    )
+                }
+            }
+            PhonePane.DIFF -> {
+                item {
+                    PhoneBackHeader(
+                        title = "Diff",
+                        subtitle = state.selectedFilePath.orEmpty(),
+                        onBackClick = { onAction(OfflineGitAction.OnPhoneBackClick) },
+                    )
+                }
+                val diff = state.diff
+                if (diff == null) {
+                    item { EmptyDiffCard() }
+                } else {
+                    item {
+                        DiffViewerHeader(
+                            diff = diff,
+                            selectedFile = state.selectedFile(),
+                            viewerMode = state.viewerMode,
+                            onAction = onAction,
+                        )
+                    }
+                    diffItems(
+                        diff = diff,
+                        viewerMode = state.viewerMode,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WideOfflineGitScreen(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .width(380.dp)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.surface),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            navigationItems(
+                state = state,
                 onAction = onAction,
             )
         }
-        item {
-            SectionCard(title = "Repositories") {
-                state.repositories.forEach { repository ->
-                    SelectableRow(
-                        title = "${repository.owner}/${repository.name}",
-                        subtitle = "default: ${repository.defaultBranch}",
-                        isSelected = repository.id == state.selectedRepositoryId,
-                        onClick = { onAction(OfflineGitAction.OnRepositoryClick(repository.id)) },
-                    )
-                }
-            }
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outlineVariant),
+        )
+        DiffViewerPane(
+            state = state,
+            onAction = onAction,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+        )
+    }
+}
+
+private fun LazyListScope.navigationItems(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    item {
+        Header(
+            isLoading = state.isLoading,
+            error = state.error,
+            syncStatus = state.syncStatus,
+            onRetryClick = { onAction(OfflineGitAction.OnRetryClick) },
+        )
+    }
+    item {
+        GithubSyncCard(
+            token = state.githubToken,
+            hasRepository = state.selectedRepositoryId != null,
+            hasBranch = state.selectedBranchName != null,
+            isLoading = state.isLoading,
+            downloadJob = state.downloadJob,
+            onAction = onAction,
+        )
+    }
+    item {
+        RepositorySection(
+            state = state,
+            onAction = onAction,
+        )
+    }
+    item {
+        BranchSection(
+            state = state,
+            onAction = onAction,
+        )
+    }
+    item {
+        CommitSection(
+            state = state,
+            onAction = onAction,
+        )
+    }
+    item {
+        ChangedFilesSection(
+            state = state,
+            onAction = onAction,
+        )
+    }
+}
+
+private fun LazyListScope.diffItems(
+    diff: DiffFile,
+    viewerMode: DiffViewerMode,
+) {
+    when (viewerMode) {
+        DiffViewerMode.UNIFIED -> items(
+            items = diff.hunks,
+            key = { hunk -> "unified:${hunk.oldStart}:${hunk.newStart}" },
+        ) { hunk ->
+            UnifiedDiffHunkCard(hunk = hunk)
         }
-        item {
-            SectionCard(title = "Branches") {
-                state.branches.forEach { branch ->
-                    SelectableRow(
-                        title = branch.name,
-                        subtitle = branch.headSha.take(12),
-                        isSelected = branch.name == state.selectedBranchName,
-                        onClick = { onAction(OfflineGitAction.OnBranchClick(branch.name)) },
-                    )
-                }
-            }
+        DiffViewerMode.SIDE_BY_SIDE -> items(
+            items = diff.hunks,
+            key = { hunk -> "side:${hunk.oldStart}:${hunk.newStart}" },
+        ) { hunk ->
+            SideBySideDiffHunkCard(hunk = hunk)
         }
-        item {
-            SectionCard(title = "Commits") {
-                state.commits.forEach { commit ->
-                    SelectableRow(
-                        title = commit.message.lineSequence().firstOrNull().orEmpty(),
-                        subtitle = listOfNotNull(commit.authorName, commit.sha.take(12)).joinToString(" • "),
-                        isSelected = commit.sha == state.selectedCommitSha,
-                        onClick = { onAction(OfflineGitAction.OnCommitClick(commit.sha)) },
-                    )
-                }
-            }
+    }
+}
+
+@Composable
+private fun DiffViewerPane(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        val diff = state.diff
+        if (diff == null) {
+            EmptyDiffCard()
+            return@Column
         }
-        item {
-            SectionCard(title = "Changed files") {
-                state.files.forEach { file ->
-                    SelectableRow(
-                        title = file.path,
-                        subtitle = "+${file.additions} -${file.deletions} • ${file.status}",
-                        isSelected = file.path == state.selectedFilePath,
-                        onClick = { onAction(OfflineGitAction.OnFileClick(file.path)) },
-                    )
-                }
-            }
-        }
-        state.diff?.let { diff ->
-            item {
-                Text(
-                    text = diff.path,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            items(
-                items = diff.hunks,
-                key = { hunk -> "${hunk.oldStart}:${hunk.newStart}" },
-            ) { hunk ->
-                DiffHunkCard(hunk = hunk)
-            }
+
+        DiffViewerHeader(
+            diff = diff,
+            selectedFile = state.selectedFile(),
+            viewerMode = state.viewerMode,
+            onAction = onAction,
+        )
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            diffItems(
+                diff = diff,
+                viewerMode = state.viewerMode,
+            )
         }
     }
 }
@@ -207,6 +414,39 @@ private fun Header(
         }
         if (isLoading) {
             CircularProgressIndicator()
+        }
+    }
+}
+
+@Composable
+private fun PhoneBackHeader(
+    title: String,
+    subtitle: String,
+    onBackClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedButton(onClick = onBackClick) {
+            Text(text = "Back")
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -270,6 +510,86 @@ private fun GithubSyncCard(
 }
 
 @Composable
+private fun RepositorySection(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    SectionCard(title = "Repositories") {
+        if (state.repositories.isEmpty()) {
+            EmptySectionText(text = "Fetch repositories or use the demo data.")
+        }
+        state.repositories.forEach { repository ->
+            SelectableRow(
+                title = "${repository.owner}/${repository.name}",
+                subtitle = "default: ${repository.defaultBranch}",
+                isSelected = repository.id == state.selectedRepositoryId,
+                onClick = { onAction(OfflineGitAction.OnRepositoryClick(repository.id)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun BranchSection(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    SectionCard(title = "Branches") {
+        if (state.branches.isEmpty()) {
+            EmptySectionText(text = "Select a repository and fetch branches.")
+        }
+        state.branches.forEach { branch ->
+            SelectableRow(
+                title = branch.name,
+                subtitle = branch.headSha.take(12),
+                isSelected = branch.name == state.selectedBranchName,
+                onClick = { onAction(OfflineGitAction.OnBranchClick(branch.name)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun CommitSection(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    SectionCard(title = "Commits") {
+        if (state.commits.isEmpty()) {
+            EmptySectionText(text = "Download a branch to browse commits offline.")
+        }
+        state.commits.forEach { commit ->
+            SelectableRow(
+                title = commit.message.lineSequence().firstOrNull().orEmpty(),
+                subtitle = listOfNotNull(commit.authorName, commit.sha.take(12)).joinToString(" • "),
+                isSelected = commit.sha == state.selectedCommitSha,
+                onClick = { onAction(OfflineGitAction.OnCommitClick(commit.sha)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChangedFilesSection(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    SectionCard(title = "Changed files") {
+        if (state.files.isEmpty()) {
+            EmptySectionText(text = "Select a commit to see changed files.")
+        }
+        state.files.forEach { file ->
+            SelectableRow(
+                title = file.path,
+                subtitle = "+${file.additions} -${file.deletions} • ${file.status}",
+                isSelected = file.path == state.selectedFilePath,
+                onClick = { onAction(OfflineGitAction.OnFileClick(file.path)) },
+            )
+        }
+    }
+}
+
+@Composable
 private fun SectionCard(
     title: String,
     content: @Composable () -> Unit,
@@ -290,6 +610,15 @@ private fun SectionCard(
             content()
         }
     }
+}
+
+@Composable
+private fun EmptySectionText(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
@@ -332,12 +661,112 @@ private fun SelectableRow(
 }
 
 @Composable
-private fun DiffHunkCard(hunk: DiffHunk) {
+private fun EmptyDiffCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "Diff viewer",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "Select a commit file to view cached changes.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiffViewerHeader(
+    diff: DiffFile,
+    selectedFile: GithubCommitFile?,
+    viewerMode: DiffViewerMode,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = diff.path,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = diff.subtitle(selectedFile),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            DiffModeSelector(
+                selectedMode = viewerMode,
+                onModeClick = { mode -> onAction(OfflineGitAction.OnViewerModeClick(mode)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiffModeSelector(
+    selectedMode: DiffViewerMode,
+    onModeClick: (DiffViewerMode) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        DiffModeButton(
+            text = "Unified",
+            selected = selectedMode == DiffViewerMode.UNIFIED,
+            onClick = { onModeClick(DiffViewerMode.UNIFIED) },
+        )
+        DiffModeButton(
+            text = "Side-by-side",
+            selected = selectedMode == DiffViewerMode.SIDE_BY_SIDE,
+            onClick = { onModeClick(DiffViewerMode.SIDE_BY_SIDE) },
+        )
+    }
+}
+
+@Composable
+private fun DiffModeButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    if (selected) {
+        Button(onClick = onClick) {
+            Text(text = text)
+        }
+    } else {
+        OutlinedButton(onClick = onClick) {
+            Text(text = text)
+        }
+    }
+}
+
+@Composable
+private fun UnifiedDiffHunkCard(hunk: DiffHunk) {
+    val horizontalScrollState = rememberScrollState()
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Column(modifier = Modifier.padding(vertical = 8.dp)) {
+        Column(
+            modifier = Modifier
+                .horizontalScroll(horizontalScrollState)
+                .padding(vertical = 8.dp),
+        ) {
             hunk.lines.forEach { line ->
                 DiffLineRow(line = line)
             }
@@ -350,56 +779,264 @@ private fun DiffLineRow(line: DiffLine) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(line.backgroundColor())
+            .background(line.type.backgroundColor())
             .padding(horizontal = 8.dp, vertical = 2.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Text(
             text = line.oldLineNumber?.toString().orEmpty(),
-            modifier = Modifier.weight(0.12f),
+            modifier = Modifier.width(48.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontFamily = FontFamily.Monospace,
         )
         Text(
             text = line.newLineNumber?.toString().orEmpty(),
-            modifier = Modifier.weight(0.12f),
+            modifier = Modifier.width(48.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontFamily = FontFamily.Monospace,
         )
         Text(
             text = line.prefix(),
-            modifier = Modifier.weight(0.08f),
+            modifier = Modifier.width(24.dp),
             style = MaterialTheme.typography.bodySmall,
+            color = line.type.textColor(),
             fontFamily = FontFamily.Monospace,
         )
         Text(
             text = line.text,
-            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
+            color = line.type.textColor(),
             fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+            softWrap = false,
         )
     }
 }
 
 @Composable
-private fun DiffLine.backgroundColor(): Color = when (type) {
+private fun SideBySideDiffHunkCard(hunk: DiffHunk) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(modifier = Modifier.padding(vertical = 8.dp)) {
+            HunkHeaderRow(text = hunk.headerText())
+            hunk.toSideBySideRows().forEach { row ->
+                SideBySideLineRow(row = row)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HunkHeaderRow(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DiffLineType.HUNK_HEADER.backgroundColor())
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = DiffLineType.HUNK_HEADER.textColor(),
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        overflow = TextOverflow.Clip,
+        softWrap = false,
+    )
+}
+
+@Composable
+private fun SideBySideLineRow(row: SideBySideDiffRow) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        SideBySideCell(
+            lineNumber = row.oldLineNumber,
+            text = row.oldText,
+            type = row.oldType,
+            modifier = Modifier.weight(1f),
+        )
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .height(24.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant),
+        )
+        SideBySideCell(
+            lineNumber = row.newLineNumber,
+            text = row.newText,
+            type = row.newType,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun SideBySideCell(
+    lineNumber: Int?,
+    text: String?,
+    type: DiffLineType?,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .background(type.backgroundColor())
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = lineNumber?.toString().orEmpty(),
+            modifier = Modifier.width(48.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontFamily = FontFamily.Monospace,
+        )
+        Text(
+            text = type.prefix(),
+            modifier = Modifier.width(24.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = type.textColor(),
+            fontFamily = FontFamily.Monospace,
+        )
+        Text(
+            text = text.orEmpty(),
+            style = MaterialTheme.typography.bodySmall,
+            color = type.textColor(),
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+            softWrap = false,
+        )
+    }
+}
+
+@Composable
+private fun DiffLineType?.backgroundColor(): Color = when (this) {
     DiffLineType.ADDITION -> Color(0xFFE6F4EA)
     DiffLineType.DELETION -> Color(0xFFFFEBEE)
     DiffLineType.HUNK_HEADER -> MaterialTheme.colorScheme.tertiaryContainer
     DiffLineType.CONTEXT,
     DiffLineType.NO_NEWLINE,
+    null,
     -> Color.Transparent
 }
 
-private fun DiffLine.prefix(): String = when (type) {
+@Composable
+private fun DiffLineType?.textColor(): Color = when (this) {
+    DiffLineType.ADDITION -> Color(0xFF1E7F37)
+    DiffLineType.DELETION -> Color(0xFFB42318)
+    DiffLineType.HUNK_HEADER -> MaterialTheme.colorScheme.onTertiaryContainer
+    DiffLineType.CONTEXT,
+    DiffLineType.NO_NEWLINE,
+    null,
+    -> MaterialTheme.colorScheme.onSurface
+}
+
+private fun DiffLine.prefix(): String = type.prefix()
+
+private fun DiffLineType?.prefix(): String = when (this) {
     DiffLineType.ADDITION -> "+"
     DiffLineType.DELETION -> "-"
     DiffLineType.HUNK_HEADER -> "@"
     DiffLineType.CONTEXT -> " "
     DiffLineType.NO_NEWLINE -> "\\"
+    null -> " "
 }
+
+private fun DiffHunk.headerText(): String = lines
+    .firstOrNull { it.type == DiffLineType.HUNK_HEADER }
+    ?.text
+    ?: "@@ -$oldStart,$oldLineCount +$newStart,$newLineCount @@"
+
+private fun DiffHunk.toSideBySideRows(): List<SideBySideDiffRow> {
+    val rows = mutableListOf<SideBySideDiffRow>()
+    val pendingDeletions = ArrayDeque<DiffLine>()
+
+    fun flushDeletions() {
+        while (pendingDeletions.isNotEmpty()) {
+            val deletion = pendingDeletions.removeFirst()
+            rows += SideBySideDiffRow(
+                oldLineNumber = deletion.oldLineNumber,
+                oldText = deletion.text,
+                oldType = deletion.type,
+                newLineNumber = null,
+                newText = null,
+                newType = null,
+            )
+        }
+    }
+
+    lines.forEach { line ->
+        when (line.type) {
+            DiffLineType.DELETION -> pendingDeletions += line
+            DiffLineType.ADDITION -> {
+                val deletion = pendingDeletions.removeFirstOrNull()
+                rows += SideBySideDiffRow(
+                    oldLineNumber = deletion?.oldLineNumber,
+                    oldText = deletion?.text,
+                    oldType = deletion?.type,
+                    newLineNumber = line.newLineNumber,
+                    newText = line.text,
+                    newType = line.type,
+                )
+            }
+            DiffLineType.CONTEXT,
+            DiffLineType.NO_NEWLINE,
+            -> {
+                flushDeletions()
+                rows += SideBySideDiffRow(
+                    oldLineNumber = line.oldLineNumber,
+                    oldText = line.text,
+                    oldType = line.type,
+                    newLineNumber = line.newLineNumber,
+                    newText = line.text,
+                    newType = line.type,
+                )
+            }
+            DiffLineType.HUNK_HEADER -> Unit
+        }
+    }
+    flushDeletions()
+    return rows
+}
+
+private fun <T> ArrayDeque<T>.removeFirstOrNull(): T? = if (isEmpty()) null else removeFirst()
+
+private fun DiffFile.subtitle(selectedFile: GithubCommitFile?): String = buildList {
+    add(status)
+    if (selectedFile != null) {
+        add("+${selectedFile.additions} -${selectedFile.deletions}")
+    }
+    previousPath?.let { add("from $it") }
+}.joinToString(" • ")
+
+private fun OfflineGitState.selectedFile(): GithubCommitFile? = files.firstOrNull { it.path == selectedFilePath }
+
+private fun OfflineGitState.selectedRepositoryLabel(): String = repositories
+    .firstOrNull { it.id == selectedRepositoryId }
+    ?.let { "${it.owner}/${it.name}" }
+    .orEmpty()
+
+private fun OfflineGitState.selectedBranchLabel(): String = listOf(
+    selectedRepositoryLabel(),
+    selectedBranchName.orEmpty(),
+)
+    .filter { it.isNotBlank() }
+    .joinToString(" • ")
+
+private fun OfflineGitState.selectedCommitLabel(): String = commits
+    .firstOrNull { it.sha == selectedCommitSha }
+    ?.let { commit ->
+        listOf(
+            commit.message.lineSequence().firstOrNull().orEmpty(),
+            commit.sha.take(12),
+        )
+            .filter { it.isNotBlank() }
+            .joinToString(" • ")
+    }
+    .orEmpty()
 
 private fun BranchDownloadJob.statusText(): String = when (status) {
     BranchDownloadJobStatus.RUNNING -> "Download running: ${(progress * 100).toInt()}%"
@@ -407,12 +1044,32 @@ private fun BranchDownloadJob.statusText(): String = when (status) {
     BranchDownloadJobStatus.FAILED -> "Download failed: ${errorMessage.orEmpty()}"
 }
 
+private data class SideBySideDiffRow(
+    val oldLineNumber: Int?,
+    val oldText: String?,
+    val oldType: DiffLineType?,
+    val newLineNumber: Int?,
+    val newText: String?,
+    val newType: DiffLineType?,
+)
+
 @Preview(showBackground = true)
 @Composable
 private fun OfflineGitScreenPreview() {
     MaterialTheme {
         OfflineGitScreen(
             state = previewState(),
+            onAction = {},
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 1000, heightDp = 700)
+@Composable
+private fun WideOfflineGitScreenPreview() {
+    MaterialTheme {
+        OfflineGitScreen(
+            state = previewState().copy(viewerMode = DiffViewerMode.SIDE_BY_SIDE),
             onAction = {},
         )
     }

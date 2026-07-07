@@ -63,6 +63,7 @@ class OfflineGitViewModelTest {
         assertEquals("main", state.branches.single().name)
         assertEquals("demo-commit", state.commits.single().sha)
         assertEquals("README.md", state.files.single().path)
+        assertEquals(PhonePane.REPOSITORIES, state.phonePane)
         assertNotNull(state.diff)
     }
 
@@ -112,6 +113,35 @@ class OfflineGitViewModelTest {
         val viewModel = createViewModel(repositoryStore = repositoryStore)
 
         assertEquals(job, viewModel.state.value.downloadJob)
+    }
+
+    @Test
+    fun `changes diff viewer mode`() = runTest {
+        val viewModel = createViewModel()
+
+        viewModel.onAction(OfflineGitAction.OnViewerModeClick(DiffViewerMode.SIDE_BY_SIDE))
+
+        assertEquals(DiffViewerMode.SIDE_BY_SIDE, viewModel.state.value.viewerMode)
+    }
+
+    @Test
+    fun `phone navigation advances and goes back`() = runTest {
+        val viewModel = createViewModel()
+
+        viewModel.onAction(OfflineGitAction.OnRepositoryClick(1))
+        assertEquals(PhonePane.BRANCHES, viewModel.state.value.phonePane)
+
+        viewModel.onAction(OfflineGitAction.OnBranchClick("main"))
+        assertEquals(PhonePane.COMMITS, viewModel.state.value.phonePane)
+
+        viewModel.onAction(OfflineGitAction.OnCommitClick("demo-commit"))
+        assertEquals(PhonePane.FILES, viewModel.state.value.phonePane)
+
+        viewModel.onAction(OfflineGitAction.OnFileClick("README.md"))
+        assertEquals(PhonePane.DIFF, viewModel.state.value.phonePane)
+
+        viewModel.onAction(OfflineGitAction.OnPhoneBackClick)
+        assertEquals(PhonePane.FILES, viewModel.state.value.phonePane)
     }
 
     @Test

@@ -54,6 +54,7 @@ class OfflineGitViewModel(
             OfflineGitAction.OnFetchRepositoriesClick -> fetchRemoteRepositories()
             OfflineGitAction.OnFetchBranchesClick -> fetchRemoteBranches()
             OfflineGitAction.OnDownloadBranchClick -> downloadSelectedBranch()
+            OfflineGitAction.OnPhoneBackClick -> _state.update { it.copy(phonePane = it.phonePane.previous()) }
             is OfflineGitAction.OnTokenChange -> {
                 tokenStore.token = action.token
                 _state.update { it.copy(githubToken = action.token) }
@@ -63,14 +64,24 @@ class OfflineGitViewModel(
                 branchName = null,
                 commitSha = null,
                 filePath = null,
+                phonePane = PhonePane.BRANCHES,
             )
             is OfflineGitAction.OnBranchClick -> load(
                 branchName = action.branchName,
                 commitSha = null,
                 filePath = null,
+                phonePane = PhonePane.COMMITS,
             )
-            is OfflineGitAction.OnCommitClick -> load(commitSha = action.commitSha, filePath = null)
-            is OfflineGitAction.OnFileClick -> load(filePath = action.path)
+            is OfflineGitAction.OnCommitClick -> load(
+                commitSha = action.commitSha,
+                filePath = null,
+                phonePane = PhonePane.FILES,
+            )
+            is OfflineGitAction.OnFileClick -> load(
+                filePath = action.path,
+                phonePane = PhonePane.DIFF,
+            )
+            is OfflineGitAction.OnViewerModeClick -> _state.update { it.copy(viewerMode = action.mode) }
         }
     }
 
@@ -79,6 +90,7 @@ class OfflineGitViewModel(
         branchName: String? = _state.value.selectedBranchName,
         commitSha: String? = _state.value.selectedCommitSha,
         filePath: String? = _state.value.selectedFilePath,
+        phonePane: PhonePane? = null,
     ) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
@@ -88,6 +100,7 @@ class OfflineGitViewModel(
                 branchName = branchName,
                 commitSha = commitSha,
                 filePath = filePath,
+                phonePane = phonePane,
             )
         }
     }
@@ -107,6 +120,7 @@ class OfflineGitViewModel(
                 branchName = null,
                 commitSha = null,
                 filePath = null,
+                phonePane = PhonePane.REPOSITORIES,
             )
         }
     }
@@ -130,6 +144,7 @@ class OfflineGitViewModel(
                 branchName = branches.firstOrNull()?.name,
                 commitSha = null,
                 filePath = null,
+                phonePane = PhonePane.BRANCHES,
             )
         }
     }
@@ -167,6 +182,7 @@ class OfflineGitViewModel(
                             branchName = branch.name,
                             commitSha = null,
                             filePath = null,
+                            phonePane = PhonePane.COMMITS,
                         )
                     }
                     is BranchDownloadProgress.Failed -> _state.update {
@@ -185,6 +201,7 @@ class OfflineGitViewModel(
         branchName: String?,
         commitSha: String?,
         filePath: String?,
+        phonePane: PhonePane?,
     ) {
         val repositories = repositoryStore.getRepositories()
             .dataOrNull { "Unable to load repositories: ${it.toMessage()}" }
@@ -247,6 +264,7 @@ class OfflineGitViewModel(
                 files = files,
                 selectedFilePath = selectedFile?.path,
                 diff = diff,
+                phonePane = phonePane ?: it.phonePane,
                 downloadJob = downloadJob,
                 error = null,
             )
@@ -329,6 +347,14 @@ class OfflineGitViewModel(
         is DiffError.Storage -> error.toMessage()
     }
 
+    private fun PhonePane.previous(): PhonePane = when (this) {
+        PhonePane.REPOSITORIES -> PhonePane.REPOSITORIES
+        PhonePane.BRANCHES -> PhonePane.REPOSITORIES
+        PhonePane.COMMITS -> PhonePane.BRANCHES
+        PhonePane.FILES -> PhonePane.COMMITS
+        PhonePane.DIFF -> PhonePane.FILES
+    }
+
     private companion object {
         const val DEFAULT_COMMIT_LIMIT = 25
         val DEMO_REPOSITORY = GithubRepository(
@@ -397,6 +423,8 @@ data class OfflineGitState(
     val files: List<GithubCommitFile> = emptyList(),
     val selectedFilePath: String? = null,
     val diff: DiffFile? = null,
+    val viewerMode: DiffViewerMode = DiffViewerMode.UNIFIED,
+    val phonePane: PhonePane = PhonePane.REPOSITORIES,
     val downloadJob: BranchDownloadJob? = null,
     val githubToken: String = "",
     val syncStatus: String? = null,
@@ -409,9 +437,24 @@ sealed interface OfflineGitAction {
     data object OnFetchRepositoriesClick : OfflineGitAction
     data object OnFetchBranchesClick : OfflineGitAction
     data object OnDownloadBranchClick : OfflineGitAction
+    data object OnPhoneBackClick : OfflineGitAction
     data class OnTokenChange(val token: String) : OfflineGitAction
     data class OnRepositoryClick(val repositoryId: Long) : OfflineGitAction
     data class OnBranchClick(val branchName: String) : OfflineGitAction
     data class OnCommitClick(val commitSha: String) : OfflineGitAction
     data class OnFileClick(val path: String) : OfflineGitAction
+    data class OnViewerModeClick(val mode: DiffViewerMode) : OfflineGitAction
+}
+
+enum class DiffViewerMode {
+    UNIFIED,
+    SIDE_BY_SIDE,
+}
+
+enum class PhonePane {
+    REPOSITORIES,
+    BRANCHES,
+    COMMITS,
+    FILES,
+    DIFF,
 }
