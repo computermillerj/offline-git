@@ -1,0 +1,19 @@
+-- v2 -> v3: multi-account support and persisted selection.
+
+ALTER TABLE Account ADD COLUMN lastUsedAt INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE AccountRepository (
+    accountId INTEGER NOT NULL,
+    repositoryId INTEGER NOT NULL,
+    PRIMARY KEY(accountId, repositoryId),
+    FOREIGN KEY(accountId) REFERENCES Account(id) ON DELETE CASCADE,
+    FOREIGN KEY(repositoryId) REFERENCES Repository(id) ON DELETE CASCADE
+);
+
+CREATE TABLE Selection (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    repositoryId INTEGER,
+    branchName TEXT,
+    commitSha TEXT,
+    filePath TEXT
+);

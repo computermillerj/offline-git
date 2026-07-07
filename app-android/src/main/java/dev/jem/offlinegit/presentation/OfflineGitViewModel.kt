@@ -3,14 +3,15 @@ package dev.jem.offlinegit.presentation
 import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.jem.offlinegit.domain.AccountTokenStore
 import dev.jem.offlinegit.domain.BranchDownloadJob
 import dev.jem.offlinegit.domain.BranchDownloadProgress
-import dev.jem.offlinegit.domain.BranchDownloader
 import dev.jem.offlinegit.domain.DataError
 import dev.jem.offlinegit.domain.DiffError
 import dev.jem.offlinegit.domain.DiffFile
 import dev.jem.offlinegit.domain.DiffProvider
 import dev.jem.offlinegit.domain.Error
+import dev.jem.offlinegit.domain.GithubAccount
 import dev.jem.offlinegit.domain.GithubDeviceAuthDataSource
 import dev.jem.offlinegit.domain.GithubDeviceAuthError
 import dev.jem.offlinegit.domain.GithubDeviceCode
@@ -18,12 +19,12 @@ import dev.jem.offlinegit.domain.GithubBranch
 import dev.jem.offlinegit.domain.GithubCommitDetails
 import dev.jem.offlinegit.domain.GithubCommitFile
 import dev.jem.offlinegit.domain.GithubCommitSummary
-import dev.jem.offlinegit.domain.GithubRemoteDataSource
 import dev.jem.offlinegit.domain.GithubRepository
+import dev.jem.offlinegit.domain.GithubSessionFactory
 import dev.jem.offlinegit.domain.PatchStore
 import dev.jem.offlinegit.domain.RepositoryStore
 import dev.jem.offlinegit.domain.Result
-import dev.jem.offlinegit.domain.WritableTokenStore
+import dev.jem.offlinegit.domain.StoredSelection
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,10 +36,9 @@ class OfflineGitViewModel(
     private val repositoryStore: RepositoryStore,
     private val patchStore: PatchStore,
     private val diffProvider: DiffProvider,
-    private val remoteDataSource: GithubRemoteDataSource,
+    private val sessionFactory: GithubSessionFactory,
     private val authDataSource: GithubDeviceAuthDataSource,
-    private val branchDownloader: BranchDownloader,
-    private val tokenStore: WritableTokenStore,
+    private val accountTokenStore: AccountTokenStore,
     private val closeRemoteResources: () -> Unit = {},
 ) : ViewModel() {
 
@@ -46,6 +46,7 @@ class OfflineGitViewModel(
     val state = _state.asStateFlow()
 
     private var deviceAuthJob: Job? = null
+    private var hasRestoredSelection = false
 
     init {
         load()
@@ -65,7 +66,8 @@ class OfflineGitViewModel(
             OfflineGitAction.OnDownloadBranchClick -> downloadSelectedBranch()
             OfflineGitAction.OnStartDeviceAuthClick -> startDeviceAuth()
             OfflineGitAction.OnCancelDeviceAuthClick -> cancelDeviceAuth()
-            OfflineGitAction.OnSignOutClick -> signOut()
+            is OfflineGitAction.OnAccountClick -> switchAccount(action.accountId)
+            is OfflineGitAction.OnRemoveAccountClick -> removeAccount(action.accountId)
             OfflineGitAction.OnPhoneBackClick -> _state.update { it.copy(phonePane = it.phonePane.previous()) }
             is OfflineGitAction.OnTokenChange -> _state.update { it.copy(githubToken = action.token) }
             is OfflineGitAction.OnAuthClientIdChange -> _state.update { it.copy(authClientId = action.clientId) }
@@ -91,8 +93,11 @@ class OfflineGitViewModel(
             )
             // Every file diff is loaded when the commit is selected, so a file
             // click only moves the selection (the wide layout scrolls to it).
-            is OfflineGitAction.OnFileClick -> _state.update {
-                it.copy(selectedFilePath = action.path, phonePane = PhonePane.DIFF)
+            is OfflineGitAction.OnFileClick -> {
+                _state.update {
+                    it.copy(selectedFilePath = action.path, phonePane = PhonePane.DIFF)
+                }
+                persistSelection()
             }
             is OfflineGitAction.OnViewerModeClick -> _state.update { it.copy(viewerMode = action.mode) }
         }
@@ -107,14 +112,121 @@ class OfflineGitViewModel(
     ) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
-            refreshStoredTokenState()
+            migrateLegacyTokenIfNeeded()
             seedDemoIfEmpty()
+            // First load after process death: pick up where the user left off.
+            var restored = StoredSelection(repositoryId, branchName, commitSha, filePath)
+            if (!hasRestoredSelection) {
+                hasRestoredSelection = true
+                (repositoryStore.getSelection() as? Result.Success)?.data?.let { stored ->
+                    restored = StoredSelection(
+                        repositoryId = repositoryId ?: stored.repositoryId,
+                        branchName = branchName ?: stored.branchName,
+                        commitSha = commitSha ?: stored.commitSha,
+                        filePath = filePath ?: stored.filePath,
+                    )
+                }
+            }
             loadSelection(
-                repositoryId = repositoryId,
-                branchName = branchName,
-                commitSha = commitSha,
-                filePath = filePath,
+                repositoryId = restored.repositoryId,
+                branchName = restored.branchName,
+                commitSha = restored.commitSha,
+                filePath = restored.filePath,
                 phonePane = phonePane,
+            )
+        }
+    }
+
+    /**
+     * The pre-multi-account build stored one token with no owning account.
+     * Resolve it to an account via /user, move the token under that account,
+     * and link the already-downloaded repositories to it — they were all
+     * fetched with this token. Left in place to retry if the probe fails
+     * (e.g. offline on first launch after the update).
+     */
+    private suspend fun migrateLegacyTokenIfNeeded() {
+        val legacyToken = accountTokenStore.getLegacyToken() ?: return
+        val account = when (val result = sessionFactory.sessionForToken(legacyToken).remoteDataSource.getAuthenticatedUser()) {
+            is Result.Error -> return
+            is Result.Success -> result.data
+        }
+        repositoryStore.upsertAccount(account)
+        accountTokenStore.saveToken(accountId = account.id, token = legacyToken)
+        repositoryStore.setActiveAccount(account.id)
+        val repositories = (repositoryStore.getRepositories() as? Result.Success)?.data.orEmpty()
+        repositoryStore.replaceAccountRepositories(
+            accountId = account.id,
+            repositoryIds = repositories.map { it.id },
+        )
+        accountTokenStore.clearLegacyToken()
+    }
+
+    /** Registers the account a token belongs to and makes it the active one. */
+    private suspend fun registerAccount(token: String): GithubAccount? {
+        val account = sessionFactory.sessionForToken(token).remoteDataSource.getAuthenticatedUser()
+            .dataOrNull { "Unable to verify token: ${it.toMessage()}" }
+            ?: return null
+        repositoryStore.upsertAccount(account)
+            .dataOrNull { "Unable to save account: ${it.toMessage()}" }
+            ?: return null
+        accountTokenStore.saveToken(accountId = account.id, token = token)
+        if (accountTokenStore.getToken(account.id).isNullOrBlank()) {
+            _state.update { it.copy(isLoading = false, error = "Unable to save token securely") }
+            return null
+        }
+        repositoryStore.setActiveAccount(account.id)
+        _state.update {
+            it.copy(
+                githubToken = "",
+                hasToken = true,
+                activeAccountId = account.id,
+                authMessage = "Signed in as ${account.login}",
+            )
+        }
+        return account
+    }
+
+    private fun switchAccount(accountId: Long) {
+        viewModelScope.launch {
+            repositoryStore.setActiveAccount(accountId)
+                .dataOrNull { "Unable to switch account: ${it.toMessage()}" }
+                ?: return@launch
+            load(
+                repositoryId = null,
+                branchName = null,
+                commitSha = null,
+                filePath = null,
+                phonePane = PhonePane.REPOSITORIES,
+            )
+        }
+    }
+
+    private fun removeAccount(accountId: Long) {
+        viewModelScope.launch {
+            accountTokenStore.clearToken(accountId)
+            repositoryStore.removeAccount(accountId)
+                .dataOrNull { "Unable to remove account: ${it.toMessage()}" }
+                ?: return@launch
+            load(
+                repositoryId = null,
+                branchName = null,
+                commitSha = null,
+                filePath = null,
+                phonePane = PhonePane.REPOSITORIES,
+            )
+        }
+    }
+
+    private fun persistSelection() {
+        val current = _state.value
+        viewModelScope.launch {
+            repositoryStore.saveSelection(
+                StoredSelection(
+                    repositoryId = current.selectedRepositoryId,
+                    branchName = current.selectedBranchName,
+                    commitSha = current.selectedCommitSha,
+                    filePath = current.selectedFilePath,
+                ),
             )
         }
     }
@@ -124,12 +236,22 @@ class OfflineGitViewModel(
             if (!saveEnteredTokenIfNeeded()) {
                 return@launch
             }
+            val accountId = _state.value.activeAccountId ?: run {
+                _state.update { it.copy(error = "Sign in with GitHub first") }
+                return@launch
+            }
             _state.update { it.copy(isLoading = true, error = null, syncStatus = "Fetching GitHub repositories…") }
-            val repositories = remoteDataSource.getRepositories()
+            val repositories = sessionFactory.sessionFor(accountId).remoteDataSource.getRepositories()
                 .dataOrNull { "Unable to fetch repositories: ${it.toMessage()}" }
                 ?: return@launch
             repositoryStore.upsertRepositories(repositories)
                 .dataOrNull { "Unable to save repositories: ${it.toMessage()}" }
+                ?: return@launch
+            repositoryStore.replaceAccountRepositories(
+                accountId = accountId,
+                repositoryIds = repositories.map { it.id },
+            )
+                .dataOrNull { "Unable to link repositories: ${it.toMessage()}" }
                 ?: return@launch
             _state.update { it.copy(syncStatus = "Fetched ${repositories.size} repositories") }
             loadSelection(
@@ -147,12 +269,17 @@ class OfflineGitViewModel(
             if (!saveEnteredTokenIfNeeded()) {
                 return@launch
             }
+            val accountId = _state.value.activeAccountId ?: run {
+                _state.update { it.copy(error = "Sign in with GitHub first") }
+                return@launch
+            }
             val repository = selectedRepository() ?: run {
                 _state.update { it.copy(error = "Select a repository first") }
                 return@launch
             }
             _state.update { it.copy(isLoading = true, error = null, syncStatus = "Fetching branches for ${repository.name}…") }
-            val branches = remoteDataSource.getBranches(owner = repository.owner, repository = repository.name)
+            val branches = sessionFactory.sessionFor(accountId).remoteDataSource
+                .getBranches(owner = repository.owner, repository = repository.name)
                 .dataOrNull { "Unable to fetch branches: ${it.toMessage()}" }
                 ?: return@launch
             repositoryStore.upsertBranches(repositoryId = repository.id, branches = branches)
@@ -178,6 +305,10 @@ class OfflineGitViewModel(
                 _state.update { it.copy(error = "Commit limit must be between 1 and $MAX_COMMIT_LIMIT") }
                 return@launch
             }
+            val accountId = _state.value.activeAccountId ?: run {
+                _state.update { it.copy(error = "Sign in with GitHub first") }
+                return@launch
+            }
             val repository = selectedRepository() ?: run {
                 _state.update { it.copy(error = "Select a repository first") }
                 return@launch
@@ -187,7 +318,7 @@ class OfflineGitViewModel(
                 return@launch
             }
 
-            branchDownloader.downloadBranch(
+            sessionFactory.sessionFor(accountId).branchDownloader.downloadBranch(
                 repository = repository,
                 branch = branch,
                 commitLimit = commitLimit,
@@ -273,20 +404,15 @@ class OfflineGitViewModel(
             elapsedSeconds += intervalSeconds
             when (val result = authDataSource.pollAccessToken(clientId = clientId, deviceCode = deviceCode.deviceCode)) {
                 is Result.Success -> {
-                    tokenStore.saveToken(result.data.accessToken)
-                    val hasToken = !tokenStore.getToken().isNullOrBlank()
+                    val account = registerAccount(result.data.accessToken)
                     _state.update {
                         it.copy(
-                            githubToken = "",
-                            hasToken = hasToken,
                             isAuthPolling = false,
-                            authMessage = if (hasToken) "Signed in with GitHub" else null,
-                            error = if (hasToken) null else "Unable to save token securely",
                             deviceUserCode = null,
                             deviceVerificationUri = null,
                         )
                     }
-                    if (hasToken) {
+                    if (account != null) {
                         fetchRemoteRepositories()
                     }
                     return
@@ -331,46 +457,19 @@ class OfflineGitViewModel(
         }
     }
 
-    private fun signOut() {
-        viewModelScope.launch {
-            deviceAuthJob?.cancel()
-            tokenStore.clearToken()
-            _state.update {
-                it.copy(
-                    githubToken = "",
-                    hasToken = false,
-                    isAuthPolling = false,
-                    authMessage = "Signed out",
-                    deviceUserCode = null,
-                    deviceVerificationUri = null,
-                )
-            }
-        }
-    }
-
     private suspend fun saveEnteredTokenIfNeeded(): Boolean {
         val token = _state.value.githubToken.trim()
         if (token.isNotEmpty()) {
-            tokenStore.saveToken(token)
-            val hasToken = !tokenStore.getToken().isNullOrBlank()
-            _state.update { it.copy(githubToken = "", hasToken = hasToken, authMessage = "Token saved securely") }
-            if (!hasToken) {
-                _state.update { it.copy(error = "Unable to save token securely", isLoading = false) }
-            }
-            return hasToken
+            return registerAccount(token) != null
         }
 
-        refreshStoredTokenState()
-        if (_state.value.hasToken) {
+        val accountId = _state.value.activeAccountId
+        if (accountId != null && !accountTokenStore.getToken(accountId).isNullOrBlank()) {
             return true
         }
 
         _state.update { it.copy(error = "Enter a token or sign in with GitHub first", isLoading = false) }
         return false
-    }
-
-    private suspend fun refreshStoredTokenState() {
-        _state.update { it.copy(hasToken = !tokenStore.getToken().isNullOrBlank()) }
     }
 
     private suspend fun loadSelection(
@@ -380,7 +479,25 @@ class OfflineGitViewModel(
         filePath: String?,
         phonePane: PhonePane?,
     ) {
-        val repositories = repositoryStore.getRepositories()
+        val accounts = repositoryStore.getAccounts()
+            .dataOrNull { "Unable to load accounts: ${it.toMessage()}" }
+            ?: return
+        val activeAccount = when (val result = repositoryStore.getActiveAccount()) {
+            is Result.Error -> {
+                _state.update { it.copy(isLoading = false, error = "Unable to load accounts: ${result.error.toMessage()}") }
+                return
+            }
+            is Result.Success -> result.data
+        }
+        val hasToken = activeAccount != null && !accountTokenStore.getToken(activeAccount.id).isNullOrBlank()
+        // With no signed-in account (fresh install / demo data) fall back to
+        // every stored repository instead of an account-scoped view.
+        val repositoriesResult = if (activeAccount != null) {
+            repositoryStore.getRepositoriesForAccount(activeAccount.id)
+        } else {
+            repositoryStore.getRepositories()
+        }
+        val repositories = repositoriesResult
             .dataOrNull { "Unable to load repositories: ${it.toMessage()}" }
             ?: return
         val downloadedRepositoryIds = when (val result = repositoryStore.getDownloadedRepositoryIds()) {
@@ -389,7 +506,24 @@ class OfflineGitViewModel(
         }
         val repository = repositories.firstOrNull { it.id == repositoryId } ?: repositories.firstOrNull()
         if (repository == null) {
-            _state.update { it.copy(isLoading = false, repositories = emptyList()) }
+            _state.update {
+                it.copy(
+                    isLoading = false,
+                    accounts = accounts,
+                    activeAccountId = activeAccount?.id,
+                    hasToken = hasToken,
+                    repositories = emptyList(),
+                    selectedRepositoryId = null,
+                    branches = emptyList(),
+                    selectedBranchName = null,
+                    commits = emptyList(),
+                    selectedCommitSha = null,
+                    files = emptyList(),
+                    selectedFilePath = null,
+                    fileDiffs = emptyList(),
+                    downloadJob = null,
+                )
+            }
             return
         }
 
@@ -443,6 +577,9 @@ class OfflineGitViewModel(
         _state.update {
             it.copy(
                 isLoading = false,
+                accounts = accounts,
+                activeAccountId = activeAccount?.id,
+                hasToken = hasToken,
                 repositories = repositories,
                 downloadedRepositoryIds = downloadedRepositoryIds,
                 selectedRepositoryId = repository.id,
@@ -458,6 +595,15 @@ class OfflineGitViewModel(
                 error = null,
             )
         }
+        // Remember the resolved position so a killed process restores it.
+        repositoryStore.saveSelection(
+            StoredSelection(
+                repositoryId = repository.id,
+                branchName = branch?.name,
+                commitSha = commit?.sha,
+                filePath = selectedFile?.path,
+            ),
+        )
     }
 
     private suspend fun seedDemoIfEmpty() {
@@ -606,22 +752,10 @@ class OfflineGitViewModel(
     }
 }
 
-class MutableTokenStore : WritableTokenStore {
-    var token: String = ""
-
-    override suspend fun getToken(): String? = token
-
-    override suspend fun saveToken(token: String) {
-        this.token = token
-    }
-
-    override suspend fun clearToken() {
-        token = ""
-    }
-}
-
 @Stable
 data class OfflineGitState(
+    val accounts: List<GithubAccount> = emptyList(),
+    val activeAccountId: Long? = null,
     val repositories: List<GithubRepository> = emptyList(),
     val downloadedRepositoryIds: Set<Long> = emptySet(),
     val repositorySearchQuery: String = "",
@@ -663,7 +797,8 @@ sealed interface OfflineGitAction {
     data object OnDownloadBranchClick : OfflineGitAction
     data object OnStartDeviceAuthClick : OfflineGitAction
     data object OnCancelDeviceAuthClick : OfflineGitAction
-    data object OnSignOutClick : OfflineGitAction
+    data class OnAccountClick(val accountId: Long) : OfflineGitAction
+    data class OnRemoveAccountClick(val accountId: Long) : OfflineGitAction
     data object OnPhoneBackClick : OfflineGitAction
     data class OnTokenChange(val token: String) : OfflineGitAction
     data class OnAuthClientIdChange(val clientId: String) : OfflineGitAction

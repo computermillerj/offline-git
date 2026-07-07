@@ -84,7 +84,7 @@ roughly in priority order:
 Non-visual mismatch found during the same audit: the app's default commit download limit is 25;
 the plan and mockups say 100.
 
-### Multi-account support (planned)
+### Multi-account support (implemented 2026-07-06)
 
 Goal: multiple signed-in GitHub accounts at once, each with its own token and repository list,
 with an account switcher and no sign-out required to change identity. Audited 2026-07-06 against
@@ -92,6 +92,29 @@ with an account switcher and no sign-out required to change identity. Audited 20
 remote data source wiring, and the missing account→repository link. Everything below
 `Repository` (branches, commits, `BranchCommit`, `CommitFile`, `DownloadJob`, blob/patch caches)
 hangs off `repositoryId` or content SHAs and needs no change.
+
+Implementation notes (all six work items below are done):
+
+- Schema migration `2.sqm` (v2→v3) adds `Account.lastUsedAt` (monotonic activation counter; the
+  active account is simply the highest), `AccountRepository`, and a single-row `Selection` table
+  that persists the last repo/branch/commit/file so process death restores the view.
+- **Foreign keys stay OFF** and account-removal cleanup is explicit per table: the store leans on
+  `INSERT OR REPLACE`, and with FK enforcement on, each REPLACE deletes the old row first, firing
+  the `ON DELETE CASCADE`s — a repository refresh would silently wipe downloaded branches.
+- `TokenStore` (single `getToken()`) survives as the per-session interface consumed by
+  `KtorGithubRemoteDataSource`; persistent storage moved to `AccountTokenStore`
+  (`get/save/clearToken(accountId)` plus `get/clearLegacyToken()` for migration).
+  `WritableTokenStore` is gone.
+- `GithubSessionFactory` (domain) / `KtorGithubSessionFactory` (sync) builds
+  `GithubSession(remoteDataSource, branchDownloader)` per account — or per raw token for the
+  pre-account `/user` probe — over one shared `HttpClient`.
+- Sign-in (device flow and PAT) ends with `registerAccount`: `/user` probe → `upsertAccount` →
+  token saved under the account id → account set active. A legacy singleton token is migrated on
+  load the same way, and the already-downloaded repositories are linked to the migrated account;
+  the legacy token is only cleared after the probe succeeds so an offline first launch retries.
+- UI: the connect sheet lists accounts with switch/remove (per-account sign-out replaces the old
+  global sign-out); the wide top bar shows the active login. With no signed-in account the repo
+  list falls back to all stored repositories (demo/fresh-install behavior).
 
 Work items, in dependency order:
 

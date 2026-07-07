@@ -12,6 +12,7 @@ import dev.jem.offlinegit.domain.GithubCommitSummary
 import dev.jem.offlinegit.domain.GithubRepository
 import dev.jem.offlinegit.domain.RepositoryStore
 import dev.jem.offlinegit.domain.Result
+import dev.jem.offlinegit.domain.StoredSelection
 
 class SqlDelightRepositoryStore(
     private val database: OfflineGitDatabase,
@@ -24,6 +25,88 @@ class SqlDelightRepositoryStore(
             id = account.id,
             login = account.login,
             avatarUrl = account.avatarUrl,
+        )
+    }
+
+    override suspend fun getAccounts(): Result<List<GithubAccount>, DataError.Local> = localResult {
+        queries.selectAccounts()
+            .executeAsList()
+            .map { it.toGithubAccount() }
+    }
+
+    override suspend fun getActiveAccount(): Result<GithubAccount?, DataError.Local> = localResult {
+        queries.selectActiveAccount()
+            .executeAsOneOrNull()
+            ?.toGithubAccount()
+    }
+
+    override suspend fun setActiveAccount(accountId: Long): EmptyResult<DataError.Local> = localResult {
+        queries.touchAccount(id = accountId)
+    }
+
+    override suspend fun removeAccount(accountId: Long): EmptyResult<DataError.Local> = localResult {
+        database.transaction {
+            // Order matters: the orphan check reads this account's junction
+            // rows, so it must run before they are deleted. Each orphaned
+            // repository's data is removed table by table — foreign keys are
+            // off, so the schema's cascades never fire.
+            val orphanedRepositoryIds = queries.selectRepositoryIdsOnlyVisibleToAccount(accountId = accountId)
+                .executeAsList()
+            orphanedRepositoryIds.forEach { repositoryId ->
+                queries.deleteCommitFilesForRepository(repositoryId)
+                queries.deleteBranchCommitsForRepository(repositoryId)
+                queries.deleteCommitsForRepository(repositoryId)
+                queries.deleteDownloadJobsForRepository(repositoryId)
+                queries.deleteBranches(repositoryId)
+                queries.deleteRepository(repositoryId)
+            }
+            queries.deleteAccountRepositories(accountId = accountId)
+            queries.deleteAccount(id = accountId)
+        }
+    }
+
+    override suspend fun replaceAccountRepositories(
+        accountId: Long,
+        repositoryIds: List<Long>,
+    ): EmptyResult<DataError.Local> = localResult {
+        database.transaction {
+            queries.deleteAccountRepositories(accountId = accountId)
+            repositoryIds.forEach { repositoryId ->
+                queries.insertAccountRepository(
+                    accountId = accountId,
+                    repositoryId = repositoryId,
+                )
+            }
+        }
+    }
+
+    override suspend fun getRepositoriesForAccount(
+        accountId: Long,
+    ): Result<List<GithubRepository>, DataError.Local> = localResult {
+        queries.selectRepositoriesForAccount(accountId = accountId)
+            .executeAsList()
+            .map { it.toGithubRepository() }
+    }
+
+    override suspend fun getSelection(): Result<StoredSelection?, DataError.Local> = localResult {
+        queries.selectSelection()
+            .executeAsOneOrNull()
+            ?.let {
+                StoredSelection(
+                    repositoryId = it.repositoryId,
+                    branchName = it.branchName,
+                    commitSha = it.commitSha,
+                    filePath = it.filePath,
+                )
+            }
+    }
+
+    override suspend fun saveSelection(selection: StoredSelection): EmptyResult<DataError.Local> = localResult {
+        queries.upsertSelection(
+            repositoryId = selection.repositoryId,
+            branchName = selection.branchName,
+            commitSha = selection.commitSha,
+            filePath = selection.filePath,
         )
     }
 
@@ -211,6 +294,12 @@ class SqlDelightRepositoryStore(
     }
 
     private fun Boolean.toLong(): Long = if (this) 1L else 0L
+
+    private fun Account.toGithubAccount(): GithubAccount = GithubAccount(
+        id = id,
+        login = login,
+        avatarUrl = avatarUrl,
+    )
 
     private fun Repository.toGithubRepository(): GithubRepository = GithubRepository(
         id = id,

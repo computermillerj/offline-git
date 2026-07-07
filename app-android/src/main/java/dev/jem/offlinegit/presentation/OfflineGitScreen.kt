@@ -2,8 +2,16 @@ package dev.jem.offlinegit.presentation
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.core.calculateTargetValue
+import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.horizontalDrag
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -26,6 +34,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -53,10 +62,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
@@ -79,10 +93,13 @@ import dev.jem.offlinegit.domain.DiffHunk
 import dev.jem.offlinegit.domain.DiffLine
 import dev.jem.offlinegit.domain.DiffLineType
 import dev.jem.offlinegit.domain.DiffSource
+import dev.jem.offlinegit.domain.GithubAccount
 import dev.jem.offlinegit.domain.GithubBranch
 import dev.jem.offlinegit.domain.GithubCommitFile
 import dev.jem.offlinegit.domain.GithubCommitSummary
 import dev.jem.offlinegit.domain.GithubRepository
+import kotlin.math.abs
+import kotlinx.coroutines.launch
 
 private val WideLayoutBreakpoint = 840.dp
 
@@ -419,6 +436,19 @@ private fun WideOfflineGitScreen(
     // Hoisted above the AnimatedVisibility: state remembered inside it is
     // discarded when the sidebar collapses, which would reset its scroll.
     val sidebarListState = rememberLazyListState()
+    // A restored selection can sit far down the commit list, so bring it into
+    // view once when commits first load — not on every selection change, since
+    // tapping a commit shouldn't yank the list around.
+    var hasScrolledToRestoredCommit by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.commits) {
+        if (!hasScrolledToRestoredCommit && state.commits.isNotEmpty()) {
+            hasScrolledToRestoredCommit = true
+            state.sidebarCommitIndex(state.selectedCommitSha)?.let { index ->
+                // A couple of items of context above the selected commit.
+                sidebarListState.scrollToItem((index - 2).coerceAtLeast(0))
+            }
+        }
+    }
     Scaffold(
         topBar = {
             WideTopBar(
@@ -568,7 +598,7 @@ private fun WideTopBar(
             }
             state.offlineChip()()
             TextButton(onClick = onConnectClick) {
-                Text(text = if (state.hasToken) "Account" else "Connect")
+                Text(text = state.activeAccount()?.login ?: "Connect")
             }
         },
     )
@@ -587,8 +617,8 @@ private fun LazyListScope.leftPaneItems(
         onRetryClick = { onAction(OfflineGitAction.OnRetryClick) },
     )
     item { SectionLabel(text = "Commits") }
-    item { CommitSection(state = state, onAction = onAction) }
     if (state.commits.isEmpty()) {
+        item { EmptySectionText(text = "Download a branch to browse commits offline.") }
         item {
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
@@ -596,6 +626,16 @@ private fun LazyListScope.leftPaneItems(
             ) {
                 Text(text = "Choose repository & branch")
             }
+        }
+    } else {
+        // Individual items (not one Column) so the list can lazily compose 100+
+        // commits and scroll straight to the restored selection.
+        items(state.commits, key = { commit -> "commit:${commit.sha}" }) { commit ->
+            CommitRow(
+                commit = commit,
+                isSelected = commit.sha == state.selectedCommitSha,
+                onClick = { onAction(OfflineGitAction.OnCommitClick(commit.sha)) },
+            )
         }
     }
     item { SectionLabel(text = "Files · ${state.files.size} changed") }
@@ -868,15 +908,26 @@ private fun ConnectAccountSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "Connect a GitHub account",
+                text = if (state.accounts.isEmpty()) "Connect a GitHub account" else "GitHub accounts",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
-            if (state.hasToken) {
+            state.accounts.forEach { account ->
+                AccountRow(
+                    account = account,
+                    isActive = account.id == state.activeAccountId,
+                    onClick = {
+                        onAction(OfflineGitAction.OnAccountClick(account.id))
+                        onDismiss()
+                    },
+                    onRemoveClick = { onAction(OfflineGitAction.OnRemoveAccountClick(account.id)) },
+                )
+            }
+            if (state.accounts.isNotEmpty()) {
                 Text(
-                    text = "GitHub token saved securely",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    text = "Add another account",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             OutlinedTextField(
@@ -934,18 +985,42 @@ private fun ConnectAccountSheet(
             ) {
                 Text(text = "Save token & sync")
             }
-            if (state.hasToken) {
-                OutlinedButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !state.isLoading,
-                    onClick = {
-                        onAction(OfflineGitAction.OnSignOutClick)
-                        onDismiss()
-                    },
-                ) {
-                    Text(text = "Sign out")
-                }
-            }
+        }
+    }
+}
+
+@Composable
+private fun AccountRow(
+    account: GithubAccount,
+    isActive: Boolean,
+    onClick: () -> Unit,
+    onRemoveClick: () -> Unit,
+) {
+    val background = if (isActive) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AvatarTile(label = account.login)
+        Text(
+            text = account.login,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (isActive) {
+            StatusChip(text = "active", style = ChipStyle.OK, showDot = true)
+        }
+        TextButton(onClick = onRemoveClick) {
+            Text(text = "Remove")
         }
     }
 }
@@ -1709,9 +1784,12 @@ private fun DiffSurface(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
+        // horizontalScroll(enabled = false) keeps the overflow layout, clipping,
+        // and programmatic scrolling but drops its greedy gesture handling; the
+        // biased modifier claims only clearly-sideways drags in its place.
         Column(
-            modifier = Modifier
-                .horizontalScroll(horizontalScroll)
+            modifier = rememberSidewaysDragModifier(horizontalScroll)
+                .horizontalScroll(horizontalScroll, enabled = false)
                 .width(IntrinsicSize.Max)
                 .padding(vertical = 8.dp),
         ) {
@@ -1724,6 +1802,50 @@ private fun DiffSurface(
         }
     }
 }
+
+// Diff cards are wide and fill most of the viewport, so nearly every swipe
+// starts on one. The stock horizontalScroll claims any drag whose x component
+// passes touch slop first — including mostly-vertical swipes — which makes a
+// multi-file commit fight the user. This claims a drag only when it is clearly
+// sideways; everything else falls through to the outer vertical list.
+@Composable
+private fun rememberSidewaysDragModifier(state: ScrollState): Modifier {
+    val scope = rememberCoroutineScope()
+    val flingDecay = rememberSplineBasedDecay<Float>()
+    return Modifier.pointerInput(state) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val velocityTracker = VelocityTracker()
+            velocityTracker.addPointerInputChange(down)
+            val drag = awaitTouchSlopOrCancellation(down.id) { change, overSlop ->
+                // Not consuming keeps waiting, so a mostly-vertical drag is
+                // eventually claimed by the outer list and this gesture cancels.
+                if (abs(overSlop.x) > abs(overSlop.y) * SidewaysDragBias) {
+                    change.consume()
+                    scope.launch { state.scrollBy(-overSlop.x) }
+                }
+            }
+            if (drag != null) {
+                velocityTracker.addPointerInputChange(drag)
+                horizontalDrag(drag.id) { change ->
+                    velocityTracker.addPointerInputChange(change)
+                    val delta = change.positionChange().x
+                    change.consume()
+                    scope.launch { state.scrollBy(-delta) }
+                }
+                val flingDistance = flingDecay.calculateTargetValue(
+                    initialValue = 0f,
+                    initialVelocity = -velocityTracker.calculateVelocity().x,
+                )
+                if (abs(flingDistance) > 1f) {
+                    scope.launch { state.animateScrollBy(flingDistance) }
+                }
+            }
+        }
+    }
+}
+
+private const val SidewaysDragBias = 1.5f
 
 @Composable
 private fun DiffLineRow(line: DiffLine) {
@@ -1968,6 +2090,20 @@ private fun DiffFile.subtitle(selectedFile: GithubCommitFile?): String = buildLi
 
 private fun OfflineGitState.selectedFileDiff(): CommitFileDiff? =
     fileDiffs.firstOrNull { it.file.path == selectedFilePath }
+
+private fun OfflineGitState.activeAccount(): GithubAccount? = accounts
+    .firstOrNull { it.id == activeAccountId }
+
+// Sidebar item index of a commit row. Must mirror leftPaneItems' order: the
+// optional error and sync-status rows, then the "Commits" label, then commits.
+private fun OfflineGitState.sidebarCommitIndex(sha: String?): Int? {
+    val commitIndex = commits.indexOfFirst { it.sha == sha }
+    if (commitIndex < 0) {
+        return null
+    }
+    val itemsBeforeCommits = listOfNotNull(error, syncStatus).size + 1
+    return itemsBeforeCommits + commitIndex
+}
 
 private fun OfflineGitState.selectedRepository(): GithubRepository? = repositories
     .firstOrNull { it.id == selectedRepositoryId }

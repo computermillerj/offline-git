@@ -6,14 +6,13 @@ import androidx.lifecycle.ViewModelProvider
 import dev.jem.offlinegit.auth.AndroidEncryptedTokenStore
 import dev.jem.offlinegit.data.github.GithubHttpClientFactory
 import dev.jem.offlinegit.data.github.KtorGithubDeviceAuthDataSource
-import dev.jem.offlinegit.data.github.KtorGithubRemoteDataSource
 import dev.jem.offlinegit.data.storage.createAndroidBlobStore
 import dev.jem.offlinegit.data.storage.createAndroidPatchStore
 import dev.jem.offlinegit.data.storage.createAndroidRepositoryStore
 import dev.jem.offlinegit.diff.FallbackDiffProvider
 import dev.jem.offlinegit.diff.GithubPatchDiffProvider
 import dev.jem.offlinegit.diff.LocalBlobDiffProvider
-import dev.jem.offlinegit.sync.GithubBranchDownloader
+import dev.jem.offlinegit.sync.KtorGithubSessionFactory
 import io.ktor.client.engine.okhttp.OkHttp
 
 class OfflineGitViewModelFactory(
@@ -30,23 +29,19 @@ class OfflineGitViewModelFactory(
         )
         val tokenStore = AndroidEncryptedTokenStore(context)
         val httpClient = GithubHttpClientFactory.create(OkHttp.create())
-        val remoteDataSource = KtorGithubRemoteDataSource(
-            httpClient = httpClient,
-            tokenStore = tokenStore,
-        )
         return OfflineGitViewModel(
             repositoryStore = repositoryStore,
             patchStore = patchStore,
             diffProvider = diffProvider,
-            remoteDataSource = remoteDataSource,
-            authDataSource = KtorGithubDeviceAuthDataSource(httpClient),
-            branchDownloader = GithubBranchDownloader(
-                remoteDataSource = remoteDataSource,
+            sessionFactory = KtorGithubSessionFactory(
+                httpClient = httpClient,
+                accountTokenStore = tokenStore,
                 repositoryStore = repositoryStore,
                 patchStore = patchStore,
                 blobStore = blobStore,
             ),
-            tokenStore = tokenStore,
+            authDataSource = KtorGithubDeviceAuthDataSource(httpClient),
+            accountTokenStore = tokenStore,
             closeRemoteResources = { httpClient.close() },
         ) as T
     }

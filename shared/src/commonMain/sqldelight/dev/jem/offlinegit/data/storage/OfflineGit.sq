@@ -1,7 +1,10 @@
 CREATE TABLE Account (
     id INTEGER NOT NULL PRIMARY KEY,
     login TEXT NOT NULL,
-    avatarUrl TEXT
+    avatarUrl TEXT,
+    -- Monotonic activation counter (no wall clock needed): the account with
+    -- the highest value is the active one.
+    lastUsedAt INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE Repository (
@@ -12,6 +15,16 @@ CREATE TABLE Repository (
     isPrivate INTEGER NOT NULL,
     updatedAt TEXT,
     UNIQUE(owner, name)
+);
+
+-- Which accounts can see which repositories. Repository rows are shared
+-- (keyed by GitHub's global id), so visibility is a junction, not a column.
+CREATE TABLE AccountRepository (
+    accountId INTEGER NOT NULL,
+    repositoryId INTEGER NOT NULL,
+    PRIMARY KEY(accountId, repositoryId),
+    FOREIGN KEY(accountId) REFERENCES Account(id) ON DELETE CASCADE,
+    FOREIGN KEY(repositoryId) REFERENCES Repository(id) ON DELETE CASCADE
 );
 
 CREATE TABLE Branch (
@@ -69,12 +82,85 @@ CREATE TABLE DownloadJob (
     FOREIGN KEY(repositoryId, branchName) REFERENCES Branch(repositoryId, name) ON DELETE CASCADE
 );
 
+-- Single-row table remembering where the user was (repo/branch/commit/file)
+-- so the app restores the same view after process death.
+CREATE TABLE Selection (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    repositoryId INTEGER,
+    branchName TEXT,
+    commitSha TEXT,
+    filePath TEXT
+);
+
 selectAccounts:
 SELECT * FROM Account ORDER BY login;
 
+-- The active account is simply the most recently touched one.
+selectActiveAccount:
+SELECT * FROM Account ORDER BY lastUsedAt DESC, login LIMIT 1;
+
+-- INSERT OR REPLACE would zero lastUsedAt on re-registration, so carry the
+-- previous value over. (UPSERT syntax needs SQLite 3.24; minSdk 26 has 3.18.)
 upsertAccount:
-INSERT OR REPLACE INTO Account(id, login, avatarUrl)
-VALUES (?, ?, ?);
+INSERT OR REPLACE INTO Account(id, login, avatarUrl, lastUsedAt)
+VALUES (:id, :login, :avatarUrl, COALESCE((SELECT lastUsedAt FROM Account WHERE id = :id), 0));
+
+touchAccount:
+UPDATE Account
+SET lastUsedAt = (SELECT COALESCE(MAX(lastUsedAt), 0) + 1 FROM Account)
+WHERE id = ?;
+
+deleteAccount:
+DELETE FROM Account WHERE id = ?;
+
+insertAccountRepository:
+INSERT OR REPLACE INTO AccountRepository(accountId, repositoryId)
+VALUES (?, ?);
+
+deleteAccountRepositories:
+DELETE FROM AccountRepository
+WHERE accountId = ?;
+
+selectRepositoriesForAccount:
+SELECT Repository.* FROM Repository
+JOIN AccountRepository ON AccountRepository.repositoryId = Repository.id
+WHERE AccountRepository.accountId = ?
+ORDER BY Repository.owner, Repository.name;
+
+-- Offline data an account leaves behind is only removed when no other
+-- account can still see the repository. Deletion is explicit per table:
+-- foreign keys are off (see AndroidStorageFactory), so cascades never fire.
+selectRepositoryIdsOnlyVisibleToAccount:
+SELECT repositoryId FROM AccountRepository
+WHERE accountId = :accountId
+  AND repositoryId NOT IN (SELECT repositoryId FROM AccountRepository WHERE accountId != :accountId);
+
+deleteCommitFilesForRepository:
+DELETE FROM CommitFile
+WHERE commitSha IN (SELECT sha FROM GitCommit WHERE repositoryId = ?);
+
+deleteBranchCommitsForRepository:
+DELETE FROM BranchCommit
+WHERE repositoryId = ?;
+
+deleteCommitsForRepository:
+DELETE FROM GitCommit
+WHERE repositoryId = ?;
+
+deleteDownloadJobsForRepository:
+DELETE FROM DownloadJob
+WHERE repositoryId = ?;
+
+deleteRepository:
+DELETE FROM Repository
+WHERE id = ?;
+
+selectSelection:
+SELECT * FROM Selection WHERE id = 1;
+
+upsertSelection:
+INSERT OR REPLACE INTO Selection(id, repositoryId, branchName, commitSha, filePath)
+VALUES (1, ?, ?, ?, ?);
 
 selectRepositories:
 SELECT * FROM Repository ORDER BY owner, name;

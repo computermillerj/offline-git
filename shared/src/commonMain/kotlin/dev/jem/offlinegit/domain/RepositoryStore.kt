@@ -1,7 +1,40 @@
 package dev.jem.offlinegit.domain
 
+/** Where the user last was; restored on launch so process death loses nothing. */
+data class StoredSelection(
+    val repositoryId: Long?,
+    val branchName: String?,
+    val commitSha: String?,
+    val filePath: String?,
+)
+
 interface RepositoryStore {
     suspend fun upsertAccount(account: GithubAccount): EmptyResult<DataError.Local>
+
+    suspend fun getAccounts(): Result<List<GithubAccount>, DataError.Local>
+
+    /** The most recently activated account, or null when none is signed in. */
+    suspend fun getActiveAccount(): Result<GithubAccount?, DataError.Local>
+
+    suspend fun setActiveAccount(accountId: Long): EmptyResult<DataError.Local>
+
+    /**
+     * Removes the account, its repository links, and any repositories no other
+     * account can still see (cascading to their offline data).
+     */
+    suspend fun removeAccount(accountId: Long): EmptyResult<DataError.Local>
+
+    /** Records which repositories [accountId] listed, replacing earlier links. */
+    suspend fun replaceAccountRepositories(
+        accountId: Long,
+        repositoryIds: List<Long>,
+    ): EmptyResult<DataError.Local>
+
+    suspend fun getRepositoriesForAccount(accountId: Long): Result<List<GithubRepository>, DataError.Local>
+
+    suspend fun getSelection(): Result<StoredSelection?, DataError.Local>
+
+    suspend fun saveSelection(selection: StoredSelection): EmptyResult<DataError.Local>
 
     suspend fun upsertRepositories(repositories: List<GithubRepository>): EmptyResult<DataError.Local>
 

@@ -5,42 +5,40 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
-import dev.jem.offlinegit.domain.WritableTokenStore
+import dev.jem.offlinegit.domain.AccountTokenStore
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/**
+ * One token entry per account, all encrypted with the same Keystore key (the
+ * alias does not need to vary per account). The pre-multi-account build stored
+ * a single token under un-suffixed keys; it is exposed as the legacy token
+ * until sign-in migration succeeds.
+ */
 class AndroidEncryptedTokenStore(
     context: Context,
     private val keyAlias: String = "offline_git_token",
-) : WritableTokenStore {
+) : AccountTokenStore {
 
     private val preferences = context.applicationContext.getSharedPreferences(
         "offline-git-auth",
         Context.MODE_PRIVATE,
     )
 
-    override suspend fun getToken(): String? = try {
-        val encryptedToken = preferences.getString(KEY_TOKEN, null) ?: return null
-        val iv = preferences.getString(KEY_IV, null) ?: return null
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            secretKey(),
-            GCMParameterSpec(GCM_TAG_BITS, iv.decodeBase64()),
-        )
-        cipher.doFinal(encryptedToken.decodeBase64()).decodeToString()
-    } catch (e: Exception) {
-        Log.w(TAG, "Unable to decrypt stored token; clearing it", e)
-        clearToken()
-        null
-    }
+    override suspend fun getToken(accountId: Long): String? = decryptToken(
+        tokenKey = "$KEY_TOKEN:$accountId",
+        ivKey = "$KEY_IV:$accountId",
+    )
 
-    override suspend fun saveToken(token: String) {
+    override suspend fun saveToken(
+        accountId: Long,
+        token: String,
+    ) {
         if (token.isBlank()) {
-            clearToken()
+            clearToken(accountId)
             return
         }
 
@@ -52,20 +50,58 @@ class AndroidEncryptedTokenStore(
             cipher.init(Cipher.ENCRYPT_MODE, secretKey())
             val encryptedToken = cipher.doFinal(token.encodeToByteArray())
             preferences.edit()
-                .putString(KEY_TOKEN, encryptedToken.encodeBase64())
-                .putString(KEY_IV, cipher.iv.encodeBase64())
+                .putString("$KEY_TOKEN:$accountId", encryptedToken.encodeBase64())
+                .putString("$KEY_IV:$accountId", cipher.iv.encodeBase64())
                 .apply()
         } catch (e: Exception) {
             Log.w(TAG, "Unable to encrypt token for storage", e)
-            clearToken()
+            clearToken(accountId)
         }
     }
 
-    override suspend fun clearToken() {
+    override suspend fun clearToken(accountId: Long) {
+        preferences.edit()
+            .remove("$KEY_TOKEN:$accountId")
+            .remove("$KEY_IV:$accountId")
+            .apply()
+    }
+
+    override suspend fun getLegacyToken(): String? = decryptToken(
+        tokenKey = KEY_TOKEN,
+        ivKey = KEY_IV,
+    )
+
+    override suspend fun clearLegacyToken() {
         preferences.edit()
             .remove(KEY_TOKEN)
             .remove(KEY_IV)
             .apply()
+    }
+
+    private fun decryptToken(
+        tokenKey: String,
+        ivKey: String,
+    ): String? = try {
+        val encryptedToken = preferences.getString(tokenKey, null)
+        val iv = preferences.getString(ivKey, null)
+        if (encryptedToken == null || iv == null) {
+            null
+        } else {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                secretKey(),
+                GCMParameterSpec(GCM_TAG_BITS, iv.decodeBase64()),
+            )
+            cipher.doFinal(encryptedToken.decodeBase64()).decodeToString()
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Unable to decrypt stored token; clearing it", e)
+        preferences.edit()
+            .remove(tokenKey)
+            .remove(ivKey)
+            .apply()
+        null
     }
 
     private fun secretKey(): SecretKey {

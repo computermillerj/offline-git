@@ -16,6 +16,7 @@ import dev.jem.offlinegit.domain.GithubRepository
 import dev.jem.offlinegit.domain.PatchStore
 import dev.jem.offlinegit.domain.RepositoryStore
 import dev.jem.offlinegit.domain.Result
+import dev.jem.offlinegit.domain.StoredSelection
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -205,6 +206,27 @@ class GithubBranchDownloaderTest {
         val downloadJobs = mutableListOf<BranchDownloadJob>()
 
         override suspend fun upsertAccount(account: GithubAccount): EmptyResult<DataError.Local> = Result.Success(Unit)
+
+        override suspend fun getAccounts(): Result<List<GithubAccount>, DataError.Local> = Result.Success(emptyList())
+
+        override suspend fun getActiveAccount(): Result<GithubAccount?, DataError.Local> = Result.Success(null)
+
+        override suspend fun setActiveAccount(accountId: Long): EmptyResult<DataError.Local> = Result.Success(Unit)
+
+        override suspend fun removeAccount(accountId: Long): EmptyResult<DataError.Local> = Result.Success(Unit)
+
+        override suspend fun replaceAccountRepositories(
+            accountId: Long,
+            repositoryIds: List<Long>,
+        ): EmptyResult<DataError.Local> = Result.Success(Unit)
+
+        override suspend fun getRepositoriesForAccount(
+            accountId: Long,
+        ): Result<List<GithubRepository>, DataError.Local> = Result.Success(emptyList())
+
+        override suspend fun getSelection(): Result<StoredSelection?, DataError.Local> = Result.Success(null)
+
+        override suspend fun saveSelection(selection: StoredSelection): EmptyResult<DataError.Local> = Result.Success(Unit)
 
         override suspend fun upsertRepositories(
             repositories: List<GithubRepository>,

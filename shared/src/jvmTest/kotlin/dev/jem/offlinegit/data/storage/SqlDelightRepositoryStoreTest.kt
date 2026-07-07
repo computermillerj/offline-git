@@ -4,12 +4,14 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.jem.offlinegit.domain.BranchDownloadJob
 import dev.jem.offlinegit.domain.BranchDownloadJobStatus
 import dev.jem.offlinegit.domain.DataError
+import dev.jem.offlinegit.domain.GithubAccount
 import dev.jem.offlinegit.domain.GithubBranch
 import dev.jem.offlinegit.domain.GithubCommitDetails
 import dev.jem.offlinegit.domain.GithubCommitFile
 import dev.jem.offlinegit.domain.GithubCommitSummary
 import dev.jem.offlinegit.domain.GithubRepository
 import dev.jem.offlinegit.domain.Result
+import dev.jem.offlinegit.domain.StoredSelection
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -152,6 +154,111 @@ class SqlDelightRepositoryStoreTest {
             expected = Result.Error(DataError.Local.NOT_FOUND),
             actual = store.getCommitDetails("missing"),
         )
+    }
+
+    @Test
+    fun `scopes repositories per account and cleans up on account removal`() = runTest {
+        val store = createStore()
+        val shared = GithubRepository(
+            id = 10,
+            owner = "octo",
+            name = "shared",
+            defaultBranch = "main",
+            isPrivate = false,
+            updatedAt = null,
+        )
+        val bobOnly = shared.copy(id = 20, name = "bob-only")
+        store.upsertAccount(GithubAccount(id = 1, login = "alice", avatarUrl = null))
+        store.upsertAccount(GithubAccount(id = 2, login = "bob", avatarUrl = null))
+        store.upsertRepositories(listOf(shared, bobOnly))
+        store.replaceAccountRepositories(accountId = 1, repositoryIds = listOf(10))
+        store.replaceAccountRepositories(accountId = 2, repositoryIds = listOf(10, 20))
+        store.upsertBranches(repositoryId = 20, branches = listOf(GithubBranch(name = "main", headSha = "head")))
+
+        assertEquals(Result.Success(listOf(shared)), store.getRepositoriesForAccount(1))
+        assertEquals(Result.Success(listOf(bobOnly, shared)), store.getRepositoriesForAccount(2))
+
+        store.setActiveAccount(1)
+        store.setActiveAccount(2)
+        assertEquals("bob", (store.getActiveAccount() as Result.Success).data?.login)
+
+        assertEquals(Result.Success(Unit), store.removeAccount(2))
+
+        // Bob's exclusive repository is gone, the shared one survives, and the
+        // remaining account becomes active again.
+        assertEquals(Result.Success(listOf(shared)), store.getRepositories())
+        assertEquals("alice", (store.getActiveAccount() as Result.Success).data?.login)
+        assertEquals(Result.Success(emptyList()), store.getRepositoriesForAccount(2))
+        assertEquals(Result.Success(emptyList()), store.getBranches(repositoryId = 20))
+    }
+
+    @Test
+    fun `re-registering an account keeps it active`() = runTest {
+        val store = createStore()
+        store.upsertAccount(GithubAccount(id = 1, login = "alice", avatarUrl = null))
+        store.upsertAccount(GithubAccount(id = 2, login = "bob", avatarUrl = null))
+        store.setActiveAccount(1)
+
+        // Signing in again upserts the same account; activation must survive.
+        store.upsertAccount(GithubAccount(id = 1, login = "alice", avatarUrl = "http://avatar"))
+
+        assertEquals("alice", (store.getActiveAccount() as Result.Success).data?.login)
+    }
+
+    @Test
+    fun `selection round trips`() = runTest {
+        val store = createStore()
+
+        assertEquals(Result.Success(null), store.getSelection())
+
+        val selection = StoredSelection(
+            repositoryId = 5,
+            branchName = "main",
+            commitSha = "sha",
+            filePath = "README.md",
+        )
+        store.saveSelection(selection)
+        assertEquals(Result.Success(selection), store.getSelection())
+
+        val updated = selection.copy(commitSha = "other-sha", filePath = null)
+        store.saveSelection(updated)
+        assertEquals(Result.Success(updated), store.getSelection())
+    }
+
+    @Test
+    fun `migrates a v2 database preserving existing rows`() = runTest {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        // The pre-multi-account shape of the tables this migration touches.
+        driver.execute(
+            null,
+            "CREATE TABLE Account (id INTEGER NOT NULL PRIMARY KEY, login TEXT NOT NULL, avatarUrl TEXT)",
+            0,
+        )
+        driver.execute(
+            null,
+            "CREATE TABLE Repository (id INTEGER NOT NULL PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL, " +
+                "defaultBranch TEXT NOT NULL, isPrivate INTEGER NOT NULL, updatedAt TEXT, UNIQUE(owner, name))",
+            0,
+        )
+        driver.execute(null, "INSERT INTO Account(id, login, avatarUrl) VALUES (7, 'octo', NULL)", 0)
+        driver.execute(null, "INSERT INTO Repository VALUES (1, 'octo', 'hello', 'main', 0, NULL)", 0)
+
+        OfflineGitDatabase.Schema.migrate(driver, 2, 3)
+
+        val store = SqlDelightRepositoryStore(OfflineGitDatabase(driver))
+        val repository = GithubRepository(
+            id = 1,
+            owner = "octo",
+            name = "hello",
+            defaultBranch = "main",
+            isPrivate = false,
+            updatedAt = null,
+        )
+        assertEquals(Result.Success(listOf(repository)), store.getRepositories())
+        store.setActiveAccount(7)
+        assertEquals("octo", (store.getActiveAccount() as Result.Success).data?.login)
+        store.replaceAccountRepositories(accountId = 7, repositoryIds = listOf(1))
+        assertEquals(Result.Success(listOf(repository)), store.getRepositoriesForAccount(7))
     }
 
     private fun createStore(): SqlDelightRepositoryStore {
