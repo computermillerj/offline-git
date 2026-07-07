@@ -545,7 +545,7 @@ class OfflineGitViewModel(
     }
 
     private companion object {
-        const val DEFAULT_COMMIT_LIMIT = 25
+        const val DEFAULT_COMMIT_LIMIT = 100
         const val DEVICE_AUTH_SLOW_DOWN_SECONDS = 5
         const val MAX_COMMIT_LIMIT = 500
         const val MIN_DEVICE_AUTH_INTERVAL_SECONDS = 5
@@ -635,7 +635,7 @@ data class OfflineGitState(
     val deviceUserCode: String? = null,
     val deviceVerificationUri: String? = null,
     val isAuthPolling: Boolean = false,
-    val commitLimitText: String = "25",
+    val commitLimitText: String = "100",
     val syncStatus: String? = null,
     val isLoading: Boolean = true,
     val error: String? = null,
