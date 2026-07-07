@@ -39,6 +39,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -61,6 +62,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -364,93 +366,140 @@ private fun DiffSource.sourceLabel(): String = when (this) {
     DiffSource.LOCAL_BLOB -> "source: local blob diff"
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WideOfflineGitScreen(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
     onConnectClick: () -> Unit,
 ) {
-    Row(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
+    Scaffold(
+        topBar = { WideTopBar(state = state, onAction = onAction, onConnectClick = onConnectClick) },
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { contentPadding ->
+        Row(
             modifier = Modifier
-                .width(380.dp)
-                .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.surface),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .fillMaxSize()
+                .padding(contentPadding),
         ) {
-            navigationItems(
+            LazyColumn(
+                modifier = Modifier
+                    .width(320.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.surface),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                leftPaneItems(
+                    state = state,
+                    onAction = onAction,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.outlineVariant),
+            )
+            DiffViewerPane(
                 state = state,
                 onAction = onAction,
-                onConnectClick = onConnectClick,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
             )
         }
-        Box(
-            modifier = Modifier
-                .width(1.dp)
-                .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.outlineVariant),
-        )
-        DiffViewerPane(
-            state = state,
-            onAction = onAction,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight(),
-        )
     }
 }
 
-private fun LazyListScope.navigationItems(
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WideTopBar(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
     onConnectClick: () -> Unit,
 ) {
+    val title = listOfNotNull(
+        state.selectedRepository()?.name,
+        state.selectedBranchName,
+    ).joinToString(" · ").ifBlank { "Offline GitHub Viewer" }
+    OfflineGitTopBar(
+        title = title,
+        subtitle = state.commitsSubtitle(),
+        isLoading = state.isLoading,
+        actions = {
+            DiffViewerMode.entries.forEach { mode ->
+                StatusChip(
+                    text = mode.label(),
+                    style = if (state.viewerMode == mode) ChipStyle.ACCENT else ChipStyle.NEUTRAL,
+                    modifier = Modifier
+                        .padding(end = 6.dp)
+                        .clickable { onAction(OfflineGitAction.OnViewerModeClick(mode)) },
+                )
+            }
+            state.offlineChip()()
+            TextButton(onClick = onConnectClick) {
+                Text(text = if (state.hasToken) "Account" else "Connect")
+            }
+        },
+    )
+}
+
+private fun LazyListScope.leftPaneItems(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    statusStripItem(
+        error = state.error,
+        syncStatus = state.syncStatus,
+        onRetryClick = { onAction(OfflineGitAction.OnRetryClick) },
+    )
     item {
-        Header(
-            isLoading = state.isLoading,
-            error = state.error,
-            syncStatus = state.syncStatus,
-            onRetryClick = { onAction(OfflineGitAction.OnRetryClick) },
+        SectionLabel(
+            text = "Repositories",
+            action = if (state.hasToken) {
+                {
+                    TextButton(
+                        onClick = { onAction(OfflineGitAction.OnFetchRepositoriesClick) },
+                        enabled = !state.isLoading,
+                    ) {
+                        Text(text = "Refresh")
+                    }
+                }
+            } else {
+                null
+            },
         )
     }
-    item {
-        Button(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = onConnectClick,
-        ) {
-            Text(text = if (state.hasToken) "Account" else "Connect account")
-        }
-    }
-    item {
-        SyncControls(
-            state = state,
-            onAction = onAction,
+    item { RepositorySection(state = state, onAction = onAction) }
+    item { SectionLabel(text = "Branches") }
+    item { BranchSection(state = state, onAction = onAction) }
+    item { DownloadOptionsCard(state = state, onAction = onAction) }
+    item { SectionLabel(text = "Commits") }
+    item { CommitSection(state = state, onAction = onAction) }
+    item { SectionLabel(text = "Files · ${state.files.size} changed") }
+    item { ChangedFilesSection(state = state, onAction = onAction) }
+}
+
+@Composable
+private fun SectionLabel(
+    text: String,
+    action: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            letterSpacing = 1.sp,
         )
-    }
-    item {
-        RepositorySection(
-            state = state,
-            onAction = onAction,
-        )
-    }
-    item {
-        BranchSection(
-            state = state,
-            onAction = onAction,
-        )
-    }
-    item {
-        CommitSection(
-            state = state,
-            onAction = onAction,
-        )
-    }
-    item {
-        ChangedFilesSection(
-            state = state,
-            onAction = onAction,
-        )
+        action?.invoke()
     }
 }
 
@@ -506,51 +555,6 @@ private fun DiffViewerPane(
                 diff = diff,
                 viewerMode = state.viewerMode,
             )
-        }
-    }
-}
-
-@Composable
-private fun Header(
-    isLoading: Boolean,
-    error: String?,
-    syncStatus: String?,
-    onRetryClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Offline GitHub Viewer",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "Local repository metadata and cached patches",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (syncStatus != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = syncStatus,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            if (error != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                ErrorBanner(
-                    message = error,
-                    onRetryClick = onRetryClick,
-                )
-            }
-        }
-        if (isLoading) {
-            CircularProgressIndicator()
         }
     }
 }
