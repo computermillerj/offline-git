@@ -362,9 +362,16 @@ private fun DiffViewerMode.label(): String = when (this) {
     DiffViewerMode.SIDE_BY_SIDE -> "side-by-side"
 }
 
-private fun DiffSource.sourceLabel(): String = when (this) {
-    DiffSource.CACHED_PATCH -> "source: cached patch"
-    DiffSource.LOCAL_BLOB -> "source: local blob diff"
+// A glanceable badge for how the diff was produced: an exact cached GitHub
+// patch (green ✓) vs. an approximate diff computed locally from blobs (amber ≈).
+private fun DiffSource.chipLabel(): String = when (this) {
+    DiffSource.CACHED_PATCH -> "✓ GitHub patch"
+    DiffSource.LOCAL_BLOB -> "≈ Local diff"
+}
+
+private fun DiffSource.chipStyle(): ChipStyle = when (this) {
+    DiffSource.CACHED_PATCH -> ChipStyle.OK
+    DiffSource.LOCAL_BLOB -> ChipStyle.NEUTRAL
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1350,7 +1357,7 @@ private fun DiffViewerHeader(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                StatusChip(text = diff.source.sourceLabel(), style = ChipStyle.ACCENT)
+                StatusChip(text = diff.source.chipLabel(), style = diff.source.chipStyle())
             }
             Text(
                 text = diff.subtitle(selectedFile),
