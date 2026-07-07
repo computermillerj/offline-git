@@ -234,6 +234,7 @@ private fun PhoneOfflineGitScreen(
                             DiffViewerHeader(
                                 diff = diff,
                                 selectedFile = state.selectedFile(),
+                                commitMessage = state.selectedCommit()?.message,
                                 viewerMode = state.viewerMode,
                                 onAction = onAction,
                             )
@@ -542,6 +543,7 @@ private fun DiffViewerPane(
         DiffViewerHeader(
             diff = diff,
             selectedFile = state.selectedFile(),
+            commitMessage = state.selectedCommit()?.message,
             viewerMode = state.viewerMode,
             onAction = onAction,
         )
@@ -1333,6 +1335,7 @@ private fun EmptyDiffCard() {
 private fun DiffViewerHeader(
     diff: DiffFile,
     selectedFile: GithubCommitFile?,
+    commitMessage: String?,
     viewerMode: DiffViewerMode,
     onAction: (OfflineGitAction) -> Unit,
 ) {
@@ -1364,9 +1367,59 @@ private fun DiffViewerHeader(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            commitMessage?.trim()?.takeIf { it.isNotEmpty() }?.let { message ->
+                CommitMessageAccordion(message = message)
+            }
             DiffModeSelector(
                 selectedMode = viewerMode,
                 onModeClick = { mode -> onAction(OfflineGitAction.OnViewerModeClick(mode)) },
+            )
+        }
+    }
+}
+
+/**
+ * Commit message shown between the file name and the mode buttons. Collapsed to
+ * the subject line; tapping expands the body. When there is no body the row is
+ * inert (no chevron, not clickable).
+ */
+@Composable
+private fun CommitMessageAccordion(message: String) {
+    val subject = message.lineSequence().firstOrNull().orEmpty()
+    val body = message.substringAfter('\n', missingDelimiterValue = "").trim()
+    val hasBody = body.isNotEmpty()
+    var expanded by remember(message) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .then(if (hasBody) Modifier.clickable { expanded = !expanded } else Modifier),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (hasBody) {
+                Text(
+                    text = if (expanded) "▾" else "▸",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = subject,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = if (expanded) Int.MAX_VALUE else 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (hasBody && expanded) {
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -1428,10 +1481,7 @@ private fun DiffSurface(
                 DiffViewerMode.UNIFIED -> diff.hunks.forEach { hunk ->
                     hunk.lines.forEach { line -> DiffLineRow(line = line) }
                 }
-                DiffViewerMode.SIDE_BY_SIDE -> diff.hunks.forEach { hunk ->
-                    HunkHeaderRow(text = hunk.headerText())
-                    SideBySideHunk(rows = hunk.toSideBySideRows())
-                }
+                DiffViewerMode.SIDE_BY_SIDE -> SideBySideDiff(rows = diff.toSideBySideRows())
             }
         }
     }
@@ -1480,26 +1530,12 @@ private fun DiffLineRow(line: DiffLine) {
 }
 
 @Composable
-private fun HunkHeaderRow(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(DiffLineType.HUNK_HEADER.backgroundColor())
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        style = MaterialTheme.typography.bodySmall,
-        color = DiffLineType.HUNK_HEADER.textColor(),
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.SemiBold,
-        softWrap = false,
-    )
-}
-
-@Composable
-private fun SideBySideHunk(rows: List<SideBySideDiffRow>) {
-    // Two independent columns, each sized to its own widest line via
-    // IntrinsicSize.Max, so long lines extend and are revealed by the shared
-    // horizontal scroll instead of being split 50/50 and clipped.
+private fun SideBySideDiff(rows: List<SideBySideDiffRow>) {
+    // The whole file is one pair of columns rather than one pair per hunk, so
+    // the left column's IntrinsicSize.Max is the widest old line in the ENTIRE
+    // file and the divider sits at a single, fixed x for every row. (Per-hunk
+    // sizing made the divider jump around.) Hunk headers are split across the
+    // two columns so they don't interrupt that continuous divider.
     Row(modifier = Modifier.height(IntrinsicSize.Min)) {
         Column(modifier = Modifier.width(IntrinsicSize.Max)) {
             rows.forEach { row ->
@@ -1537,6 +1573,21 @@ private fun SideBySideCell(
     type: DiffLineType?,
     modifier: Modifier = Modifier,
 ) {
+    if (type == DiffLineType.HUNK_HEADER) {
+        Text(
+            text = text.orEmpty(),
+            modifier = modifier
+                .background(type.backgroundColor())
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = type.textColor(),
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false,
+        )
+        return
+    }
     Row(
         modifier = modifier
             .background(type.backgroundColor())
@@ -1600,10 +1651,20 @@ private fun DiffLineType?.prefix(): String = when (this) {
     null -> " "
 }
 
-private fun DiffHunk.headerText(): String = lines
-    .firstOrNull { it.type == DiffLineType.HUNK_HEADER }
-    ?.text
-    ?: "@@ -$oldStart,$oldLineCount +$newStart,$newLineCount @@"
+// One flat row list for the entire file. Each hunk contributes a header row —
+// split so the old side shows "@@ -a,b @@" and the new side "@@ +c,d @@" — then
+// its aligned data rows, keeping both columns row-for-row parallel.
+private fun DiffFile.toSideBySideRows(): List<SideBySideDiffRow> = hunks.flatMap { hunk ->
+    val header = SideBySideDiffRow(
+        oldLineNumber = null,
+        oldText = "@@ -${hunk.oldStart},${hunk.oldLineCount} @@",
+        oldType = DiffLineType.HUNK_HEADER,
+        newLineNumber = null,
+        newText = "@@ +${hunk.newStart},${hunk.newLineCount} @@",
+        newType = DiffLineType.HUNK_HEADER,
+    )
+    listOf(header) + hunk.toSideBySideRows()
+}
 
 private fun DiffHunk.toSideBySideRows(): List<SideBySideDiffRow> {
     val rows = mutableListOf<SideBySideDiffRow>()
@@ -1745,15 +1806,15 @@ private fun previewState(): OfflineGitState {
         firstParentSha = "demo-parent",
         authorName = "Offline Git",
         authorEmail = "offline@example.local",
-        message = "Render cached unified diff",
+        message = "Render cached unified diff\n\nWire the local blob fallback and show which diff source produced the view.",
         committedAt = null,
     )
     val file = GithubCommitFile(
         path = "README.md",
         previousPath = null,
         status = "modified",
-        additions = 2,
-        deletions = 1,
+        additions = 3,
+        deletions = 2,
         blobSha = "demo-blob",
         patch = null,
     )
@@ -1761,6 +1822,8 @@ private fun previewState(): OfflineGitState {
         path = file.path,
         previousPath = null,
         status = file.status,
+        // Two hunks whose old sides differ in width, so the preview shows the
+        // side-by-side divider staying at one fixed x across the collapsed gap.
         hunks = listOf(
             DiffHunk(
                 oldStart = 1,
@@ -1774,6 +1837,19 @@ private fun previewState(): OfflineGitState {
                     DiffLine(DiffLineType.ADDITION, null, 2, "Local SQLDelight metadata is wired."),
                     DiffLine(DiffLineType.ADDITION, null, 3, "Cached patches render as unified diffs."),
                     DiffLine(DiffLineType.CONTEXT, 3, 4, "More sync work comes next."),
+                ),
+            ),
+            DiffHunk(
+                oldStart = 42,
+                oldLineCount = 3,
+                newStart = 43,
+                newLineCount = 3,
+                lines = listOf(
+                    DiffLine(DiffLineType.HUNK_HEADER, null, null, "@@ -42,3 +43,3 @@"),
+                    DiffLine(DiffLineType.CONTEXT, 42, 43, "## Status"),
+                    DiffLine(DiffLineType.DELETION, 43, null, "- TODO"),
+                    DiffLine(DiffLineType.ADDITION, null, 44, "- Done"),
+                    DiffLine(DiffLineType.CONTEXT, 44, 45, "See milestones."),
                 ),
             ),
         ),
