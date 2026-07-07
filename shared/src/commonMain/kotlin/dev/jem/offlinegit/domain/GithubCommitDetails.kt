@@ -8,7 +8,10 @@ data class GithubCommitDetails(
     val message: String,
     val committedAt: String?,
     val files: List<GithubCommitFile>,
-)
+    val parentCount: Int = 1,
+) {
+    val isMerge: Boolean get() = parentCount > 1
+}
 
 data class GithubCommitFile(
     val path: String,

@@ -91,6 +91,7 @@ class SqlDelightRepositoryStore(
                     authorEmail = commit.authorEmail,
                     message = commit.message,
                     committedAt = commit.committedAt,
+                    parentCount = commit.parentCount.toLong(),
                 )
                 queries.insertBranchCommit(
                     repositoryId = repositoryId,
@@ -110,7 +111,19 @@ class SqlDelightRepositoryStore(
             repositoryId = repositoryId,
             branchName = branchName,
         ).executeAsList()
-            .map { it.toGithubCommitSummary() }
+            .map {
+                GithubCommitSummary(
+                    sha = it.sha,
+                    firstParentSha = it.firstParentSha,
+                    authorName = it.authorName,
+                    authorEmail = it.authorEmail,
+                    message = it.message,
+                    committedAt = it.committedAt,
+                    additions = it.additions.toInt(),
+                    deletions = it.deletions.toInt(),
+                    parentCount = it.parentCount.toInt(),
+                )
+            }
     }
 
     override suspend fun upsertCommitDetails(
@@ -126,6 +139,7 @@ class SqlDelightRepositoryStore(
                 authorEmail = commit.authorEmail,
                 message = commit.message,
                 committedAt = commit.committedAt,
+                parentCount = commit.parentCount.toLong(),
             )
             queries.deleteFilesForCommit(commitSha = commit.sha)
             commit.files.forEach { file ->
@@ -154,6 +168,7 @@ class SqlDelightRepositoryStore(
             authorEmail = commit.authorEmail,
             message = commit.message,
             committedAt = commit.committedAt,
+            parentCount = commit.parentCount.toInt(),
             files = queries.selectFilesForCommit(commitSha = sha)
                 .executeAsList()
                 .map { it.toGithubCommitFile() },
@@ -206,15 +221,6 @@ class SqlDelightRepositoryStore(
     private fun Branch.toGithubBranch(): GithubBranch = GithubBranch(
         name = name,
         headSha = headSha,
-    )
-
-    private fun GitCommit.toGithubCommitSummary(): GithubCommitSummary = GithubCommitSummary(
-        sha = sha,
-        firstParentSha = firstParentSha,
-        authorName = authorName,
-        authorEmail = authorEmail,
-        message = message,
-        committedAt = committedAt,
     )
 
     private fun CommitFile.toGithubCommitFile(): GithubCommitFile = GithubCommitFile(

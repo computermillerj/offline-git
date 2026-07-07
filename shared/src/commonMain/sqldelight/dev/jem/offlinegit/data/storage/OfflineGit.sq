@@ -31,6 +31,7 @@ CREATE TABLE GitCommit (
     authorEmail TEXT,
     message TEXT NOT NULL,
     committedAt TEXT,
+    parentCount INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY(repositoryId) REFERENCES Repository(id) ON DELETE CASCADE
 );
 
@@ -96,10 +97,21 @@ INSERT OR REPLACE INTO Branch(repositoryId, name, headSha, downloadedAt)
 VALUES (?, ?, ?, ?);
 
 selectCommitsForBranch:
-SELECT GitCommit.*
+SELECT
+    GitCommit.sha,
+    GitCommit.firstParentSha,
+    GitCommit.authorName,
+    GitCommit.authorEmail,
+    GitCommit.message,
+    GitCommit.committedAt,
+    GitCommit.parentCount,
+    COALESCE(SUM(CommitFile.additions), 0) AS additions,
+    COALESCE(SUM(CommitFile.deletions), 0) AS deletions
 FROM BranchCommit
 JOIN GitCommit ON GitCommit.sha = BranchCommit.sha
+LEFT JOIN CommitFile ON CommitFile.commitSha = GitCommit.sha
 WHERE BranchCommit.repositoryId = ? AND BranchCommit.branchName = ?
+GROUP BY GitCommit.sha, BranchCommit.position
 ORDER BY BranchCommit.position;
 
 selectCommitBySha:
@@ -114,9 +126,10 @@ INSERT OR REPLACE INTO GitCommit(
     authorName,
     authorEmail,
     message,
-    committedAt
+    committedAt,
+    parentCount
 )
-VALUES (?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 deleteBranchCommits:
 DELETE FROM BranchCommit

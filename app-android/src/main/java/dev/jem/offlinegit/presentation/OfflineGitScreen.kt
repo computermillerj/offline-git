@@ -52,8 +52,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -1096,18 +1099,76 @@ private fun CommitSection(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
 ) {
-    SectionCard(title = "Commits") {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         if (state.commits.isEmpty()) {
             EmptySectionText(text = "Download a branch to browse commits offline.")
         }
         state.commits.forEach { commit ->
-            SelectableRow(
-                title = commit.message.lineSequence().firstOrNull().orEmpty(),
-                subtitle = listOfNotNull(commit.authorName, commit.sha.take(12)).joinToString(" • "),
+            CommitRow(
+                commit = commit,
                 isSelected = commit.sha == state.selectedCommitSha,
                 onClick = { onAction(OfflineGitAction.OnCommitClick(commit.sha)) },
             )
         }
+    }
+}
+
+@Composable
+private fun CommitRow(
+    commit: GithubCommitSummary,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    val background = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        AvatarTile(label = commit.authorName ?: commit.sha)
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = commit.message.lineSequence().firstOrNull().orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (commit.isMerge) {
+                    StatusChip(text = "merge · first-parent", style = ChipStyle.NEUTRAL)
+                }
+            }
+            Text(
+                text = commit.metadataLine(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun GithubCommitSummary.metadataLine() = buildAnnotatedString {
+    val parts = listOfNotNull(sha.take(7), authorName, relativeTime(committedAt))
+    append(parts.joinToString(" · "))
+    if (!isMerge && (additions > 0 || deletions > 0)) {
+        append("  ")
+        withStyle(SpanStyle(color = OfflineGitPalette.Add)) { append("+$additions") }
+        append(" ")
+        withStyle(SpanStyle(color = OfflineGitPalette.Del)) { append("−$deletions") }
     }
 }
 

@@ -7,4 +7,9 @@ data class GithubCommitSummary(
     val authorEmail: String?,
     val message: String,
     val committedAt: String?,
-)
+    val additions: Int = 0,
+    val deletions: Int = 0,
+    val parentCount: Int = 1,
+) {
+    val isMerge: Boolean get() = parentCount > 1
+}

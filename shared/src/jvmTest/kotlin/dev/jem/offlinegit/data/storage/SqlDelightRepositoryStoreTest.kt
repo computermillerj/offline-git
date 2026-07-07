@@ -72,11 +72,45 @@ class SqlDelightRepositoryStoreTest {
 
         assertEquals(Result.Success(listOf(repository)), store.getRepositories())
         assertEquals(Result.Success(branches), store.getBranches(repositoryId = repository.id))
-        assertEquals(Result.Success(commits), store.getCommits(repositoryId = repository.id, branchName = "main"))
+        // getCommits sums additions/deletions from the stored commit files.
+        assertEquals(
+            expected = Result.Success(commits.map { it.copy(additions = 2, deletions = 1) }),
+            actual = store.getCommits(repositoryId = repository.id, branchName = "main"),
+        )
         assertEquals(
             expected = Result.Success(details.copy(files = details.files.map { it.copy(patch = null) })),
             actual = store.getCommitDetails("commit-sha"),
         )
+    }
+
+    @Test
+    fun `persists commit parent count for merge detection`() = runTest {
+        val store = createStore()
+        val repository = GithubRepository(
+            id = 1,
+            owner = "octo",
+            name = "hello",
+            defaultBranch = "main",
+            isPrivate = false,
+            updatedAt = null,
+        )
+        val merge = GithubCommitSummary(
+            sha = "merge-sha",
+            firstParentSha = "parent-a",
+            authorName = "Jane",
+            authorEmail = "jane@example.com",
+            message = "Merge pull request #1",
+            committedAt = null,
+            parentCount = 2,
+        )
+
+        store.upsertRepositories(listOf(repository))
+        store.upsertBranches(repositoryId = repository.id, branches = listOf(GithubBranch("main", "head")))
+        store.upsertCommits(repositoryId = repository.id, branchName = "main", commits = listOf(merge))
+
+        val stored = (store.getCommits(repositoryId = repository.id, branchName = "main") as Result.Success).data
+        assertEquals(2, stored.single().parentCount)
+        assertEquals(true, stored.single().isMerge)
     }
 
     @Test

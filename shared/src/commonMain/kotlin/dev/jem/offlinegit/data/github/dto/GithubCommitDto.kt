@@ -51,6 +51,9 @@ fun GithubCommitDto.toGithubCommitSummary(): GithubCommitSummary = GithubCommitS
     authorEmail = commit.author?.email ?: commit.committer?.email,
     message = commit.message,
     committedAt = commit.author?.date ?: commit.committer?.date,
+    additions = files.sumOf { it.additions },
+    deletions = files.sumOf { it.deletions },
+    parentCount = parents.size,
 )
 
 fun GithubCommitDto.toGithubCommitDetails(): GithubCommitDetails {
@@ -63,6 +66,7 @@ fun GithubCommitDto.toGithubCommitDetails(): GithubCommitDetails {
         message = summary.message,
         committedAt = summary.committedAt,
         files = files.map { it.toGithubCommitFile() },
+        parentCount = parents.size,
     )
 }
 

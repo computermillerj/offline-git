@@ -1,0 +1,3 @@
+-- Adds parent count so merge commits (parentCount > 1) can be labeled
+-- without re-fetching commit metadata. Existing rows default to 1.
+ALTER TABLE GitCommit ADD COLUMN parentCount INTEGER NOT NULL DEFAULT 1;
