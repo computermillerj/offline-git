@@ -4,9 +4,9 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
 import dev.jem.offlinegit.domain.WritableTokenStore
 import java.security.KeyStore
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -33,6 +33,7 @@ class AndroidEncryptedTokenStore(
         )
         cipher.doFinal(encryptedToken.decodeBase64()).decodeToString()
     } catch (e: Exception) {
+        Log.w(TAG, "Unable to decrypt stored token; clearing it", e)
         clearToken()
         null
     }
@@ -44,18 +45,18 @@ class AndroidEncryptedTokenStore(
         }
 
         try {
-            val iv = ByteArray(GCM_IV_BYTES).also { SecureRandom().nextBytes(it) }
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(
-                Cipher.ENCRYPT_MODE,
-                secretKey(),
-                GCMParameterSpec(GCM_TAG_BITS, iv),
-            )
+            // AndroidKeyStore GCM keys require randomized encryption, so the
+            // Keystore must generate the IV itself — passing a caller-supplied
+            // IV to ENCRYPT_MODE throws. Read the generated IV back off the cipher.
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey())
+            val encryptedToken = cipher.doFinal(token.encodeToByteArray())
             preferences.edit()
-                .putString(KEY_TOKEN, cipher.doFinal(token.encodeToByteArray()).encodeBase64())
-                .putString(KEY_IV, iv.encodeBase64())
+                .putString(KEY_TOKEN, encryptedToken.encodeBase64())
+                .putString(KEY_IV, cipher.iv.encodeBase64())
                 .apply()
         } catch (e: Exception) {
+            Log.w(TAG, "Unable to encrypt token for storage", e)
             clearToken()
         }
     }
@@ -92,8 +93,8 @@ class AndroidEncryptedTokenStore(
     private fun String.decodeBase64(): ByteArray = Base64.decode(this, Base64.NO_WRAP)
 
     private companion object {
+        const val TAG = "TokenStore"
         const val ANDROID_KEY_STORE = "AndroidKeyStore"
-        const val GCM_IV_BYTES = 12
         const val GCM_TAG_BITS = 128
         const val KEY_IV = "iv"
         const val KEY_TOKEN = "token"
