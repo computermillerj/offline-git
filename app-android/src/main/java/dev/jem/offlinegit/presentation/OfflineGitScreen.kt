@@ -1177,20 +1177,91 @@ private fun ChangedFilesSection(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
 ) {
-    SectionCard(title = "Changed files") {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        state.selectedCommit()?.let { commit ->
+            CommitMessageBlock(commit)
+        }
         if (state.files.isEmpty()) {
             EmptySectionText(text = "Select a commit to see changed files.")
         }
         state.files.forEach { file ->
-            SelectableRow(
-                title = file.path,
-                subtitle = "+${file.additions} -${file.deletions} • ${file.status}",
+            ChangedFileRow(
+                file = file,
                 isSelected = file.path == state.selectedFilePath,
                 onClick = { onAction(OfflineGitAction.OnFileClick(file.path)) },
             )
         }
     }
 }
+
+@Composable
+private fun CommitMessageBlock(commit: GithubCommitSummary) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = commit.message.lineSequence().firstOrNull().orEmpty(),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        val byline = listOfNotNull(
+            commit.authorName,
+            commit.authorEmail,
+            absoluteDateTime(commit.committedAt),
+        ).joinToString(" · ")
+        if (byline.isNotBlank()) {
+            Text(
+                text = byline,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChangedFileRow(
+    file: GithubCommitFile,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    val background = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StatusSquare(status = file.status)
+        Text(
+            text = file.previousPath?.let { "$it → ${file.path}" } ?: file.path,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(color = OfflineGitPalette.Add)) { append("+${file.additions}") }
+                append(" ")
+                withStyle(SpanStyle(color = OfflineGitPalette.Del)) { append("−${file.deletions}") }
+            },
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+        )
+    }
+}
+
+private fun OfflineGitState.selectedCommit(): GithubCommitSummary? =
+    commits.firstOrNull { it.sha == selectedCommitSha }
 
 @Composable
 private fun SectionCard(
@@ -1222,45 +1293,6 @@ private fun EmptySectionText(text: String) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-}
-
-@Composable
-private fun SelectableRow(
-    title: String,
-    subtitle: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    val background = if (isSelected) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        Color.Transparent
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(background)
-            .clickable(onClick = onClick)
-            .padding(8.dp),
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (subtitle.isNotBlank()) {
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
 }
 
 @Composable
