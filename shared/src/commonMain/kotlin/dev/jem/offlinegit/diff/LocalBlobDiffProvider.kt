@@ -8,6 +8,7 @@ import dev.jem.offlinegit.domain.DiffHunk
 import dev.jem.offlinegit.domain.DiffLine
 import dev.jem.offlinegit.domain.DiffLineType
 import dev.jem.offlinegit.domain.DiffProvider
+import dev.jem.offlinegit.domain.DiffSource
 import dev.jem.offlinegit.domain.GithubCommitFile
 import dev.jem.offlinegit.domain.Result
 
@@ -35,6 +36,7 @@ class LocalBlobDiffProvider(
                 previousPath = file.previousPath,
                 status = file.status,
                 hunks = listOf(buildHunk(oldText = oldText, newText = newText)),
+                source = DiffSource.LOCAL_BLOB,
             ),
         )
     }

@@ -5,7 +5,14 @@ data class DiffFile(
     val previousPath: String?,
     val status: String,
     val hunks: List<DiffHunk>,
+    val source: DiffSource = DiffSource.CACHED_PATCH,
 )
+
+/** Which [DiffProvider] produced a [DiffFile], surfaced in the diff header. */
+enum class DiffSource {
+    CACHED_PATCH,
+    LOCAL_BLOB,
+}
 
 data class DiffHunk(
     val oldStart: Int,

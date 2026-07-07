@@ -70,6 +70,7 @@ import dev.jem.offlinegit.domain.DiffFile
 import dev.jem.offlinegit.domain.DiffHunk
 import dev.jem.offlinegit.domain.DiffLine
 import dev.jem.offlinegit.domain.DiffLineType
+import dev.jem.offlinegit.domain.DiffSource
 import dev.jem.offlinegit.domain.GithubBranch
 import dev.jem.offlinegit.domain.GithubCommitFile
 import dev.jem.offlinegit.domain.GithubCommitSummary
@@ -356,6 +357,11 @@ private fun OfflineGitTopBar(
 private fun DiffViewerMode.label(): String = when (this) {
     DiffViewerMode.UNIFIED -> "unified"
     DiffViewerMode.SIDE_BY_SIDE -> "side-by-side"
+}
+
+private fun DiffSource.sourceLabel(): String = when (this) {
+    DiffSource.CACHED_PATCH -> "source: cached patch"
+    DiffSource.LOCAL_BLOB -> "source: local blob diff"
 }
 
 @Composable
@@ -1334,13 +1340,21 @@ private fun DiffViewerHeader(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = diff.path,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = diff.path,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                StatusChip(text = diff.source.sourceLabel(), style = ChipStyle.ACCENT)
+            }
             Text(
                 text = diff.subtitle(selectedFile),
                 style = MaterialTheme.typography.bodySmall,
