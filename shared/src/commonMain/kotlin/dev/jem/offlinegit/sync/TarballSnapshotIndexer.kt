@@ -3,11 +3,12 @@ package dev.jem.offlinegit.sync
 import dev.jem.offlinegit.domain.DataError
 import dev.jem.offlinegit.domain.Result
 import okio.Buffer
-import okio.ByteString.Companion.toByteString
 import okio.GzipSource
 import okio.buffer
 
-class TarballSnapshotIndexer {
+class TarballSnapshotIndexer(
+    private val maxBlobBytes: Long = DEFAULT_MAX_BLOB_BYTES,
+) {
     fun index(tarBytes: ByteArray): Result<List<SnapshotBlob>, DataError.Local> = try {
         val bytes = tarBytes.gunzipIfNeeded()
         val blobs = mutableListOf<SnapshotBlob>()
@@ -23,7 +24,9 @@ class TarballSnapshotIndexer {
             val type = header[TYPE_OFFSET].toInt().toChar()
             val contentOffset = offset + BLOCK_SIZE
             val nextOffset = contentOffset + size.roundUpToBlock()
-            if (path != null && type.isRegularFile() && size <= bytes.size - contentOffset) {
+            // Skip oversized files: their content isn't worth caching for text
+            // diffs, and materializing + hashing a huge blob OOMs the app.
+            if (path != null && type.isRegularFile() && size in 0..(bytes.size - contentOffset).toLong() && size <= maxBlobBytes) {
                 val content = bytes.copyOfRange(contentOffset, contentOffset + size.toInt())
                 blobs += SnapshotBlob(
                     path = path,
@@ -82,10 +85,17 @@ class TarballSnapshotIndexer {
 
     private fun ByteArray.gitBlobSha(): String {
         val header = "blob $size\u0000".encodeToByteArray()
-        return (header + this).toByteString().sha1().hex()
+        // Stream the header and content through one Buffer instead of allocating
+        // a `header + content` copy (and then a ByteString copy) — that double
+        // allocation OOMs on large blobs.
+        val buffer = Buffer()
+        buffer.write(header)
+        buffer.write(this)
+        return buffer.sha1().hex()
     }
 
     private companion object {
+        const val DEFAULT_MAX_BLOB_BYTES = 5L * 1024 * 1024
         const val BLOCK_SIZE = 512
         const val NAME_OFFSET = 0
         const val NAME_LENGTH = 100

@@ -55,6 +55,19 @@ class TarballSnapshotIndexerTest {
         assertFalse(blobs.single().isText)
     }
 
+    @Test
+    fun `skips files larger than the size cap`() {
+        val cappedIndexer = TarballSnapshotIndexer(maxBlobBytes = 8)
+        val tar = tarOf(
+            entry(path = "repo-root/small.txt", content = "hi\n".encodeToByteArray()),
+            entry(path = "repo-root/big.txt", content = "0123456789".encodeToByteArray()),
+        )
+
+        val blobs = assertIs<Result.Success<List<SnapshotBlob>>>(cappedIndexer.index(tar)).data
+
+        assertEquals(listOf("small.txt"), blobs.map { it.path })
+    }
+
     private fun tarOf(vararg entries: ByteArray): ByteArray = entries.fold(byteArrayOf()) { acc, entry ->
         acc + entry
     } + ByteArray(BLOCK_SIZE * 2)
