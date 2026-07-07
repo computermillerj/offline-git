@@ -5,6 +5,7 @@ import dev.jem.offlinegit.domain.EmptyResult
 import dev.jem.offlinegit.domain.PatchStore
 import dev.jem.offlinegit.domain.Result
 import kotlinx.io.IOException
+import okio.ByteString.Companion.encodeUtf8
 import okio.FileSystem
 import okio.Path
 
@@ -25,7 +26,7 @@ class OkioPatchStore(
         }
         Result.Success(Unit)
     } catch (e: IOException) {
-        Result.Error(DataError.Local.UNKNOWN)
+        Result.Error(e.toLocalError("writePatch($path)"))
     }
 
     override suspend fun readPatch(
@@ -42,18 +43,17 @@ class OkioPatchStore(
             },
         )
     } catch (e: IOException) {
-        Result.Error(DataError.Local.UNKNOWN)
+        Result.Error(e.toLocalError("readPatch($path)"))
     }
 
+    // The cache file name is a digest of the repo path, not an encoding of it:
+    // hex-encoding the whole path doubled its length and blew past the 255-byte
+    // filename limit for repo paths over ~124 chars, failing the download.
     private fun patchPath(
         commitSha: String,
         path: String,
     ): Path = root
         .resolve("patches")
         .resolve(commitSha)
-        .resolve("${path.toCacheFileName()}.patch")
-
-    private fun String.toCacheFileName(): String = encodeToByteArray().joinToString(separator = "") { byte ->
-        (byte.toInt() and 0xff).toString(16).padStart(length = 2, padChar = '0')
-    }
+        .resolve("${path.encodeUtf8().sha1().hex()}.patch")
 }

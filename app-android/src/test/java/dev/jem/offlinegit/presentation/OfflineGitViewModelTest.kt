@@ -69,7 +69,8 @@ class OfflineGitViewModelTest {
         assertEquals("demo-commit", state.commits.single().sha)
         assertEquals("README.md", state.files.single().path)
         assertEquals(PhonePane.REPOSITORIES, state.phonePane)
-        assertNotNull(state.diff)
+        assertEquals("README.md", state.fileDiffs.single().file.path)
+        assertNotNull(state.fileDiffs.single().diff)
     }
 
     @Test

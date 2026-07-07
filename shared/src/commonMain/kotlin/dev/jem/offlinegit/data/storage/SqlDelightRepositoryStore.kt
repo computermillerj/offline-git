@@ -204,6 +204,9 @@ class SqlDelightRepositoryStore(
     private inline fun <T> localResult(block: () -> T): Result<T, DataError.Local> = try {
         Result.Success(block())
     } catch (e: Exception) {
+        // Keep the root cause in logcat; the enum alone reads as an opaque
+        // "local storage error" in the UI.
+        println("OfflineGit: database operation failed: ${e.stackTraceToString()}")
         Result.Error(DataError.Local.UNKNOWN)
     }
 

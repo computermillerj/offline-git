@@ -1,5 +1,8 @@
 package dev.jem.offlinegit.presentation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -49,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -226,14 +231,15 @@ private fun PhoneOfflineGitScreen(
                     }
                 }
                 PhonePane.DIFF -> {
-                    val diff = state.diff
+                    val entry = state.selectedFileDiff()
+                    val diff = entry?.diff
                     if (diff == null) {
-                        item { EmptyDiffCard() }
+                        item { EmptyDiffCard(message = entry?.errorMessage?.let { "Unable to load diff: $it" }) }
                     } else {
                         item {
                             DiffViewerHeader(
                                 diff = diff,
-                                selectedFile = state.selectedFile(),
+                                selectedFile = entry.file,
                                 commitMessage = state.selectedCommit()?.message,
                                 viewerMode = state.viewerMode,
                                 onAction = onAction,
@@ -302,21 +308,45 @@ private fun OfflineGitTopBar(
     title: String,
     subtitle: String,
     onBackClick: (() -> Unit)? = null,
+    navigationIcon: (@Composable () -> Unit)? = null,
+    onTitleClick: (() -> Unit)? = null,
     titleMono: Boolean = false,
     isLoading: Boolean = false,
     actions: @Composable () -> Unit = {},
 ) {
     TopAppBar(
         title = {
-            Column {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    fontFamily = if (titleMono) FontFamily.Monospace else FontFamily.Default,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            Column(
+                modifier = if (onTitleClick != null) {
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onTitleClick)
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                } else {
+                    Modifier
+                },
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = if (titleMono) FontFamily.Monospace else FontFamily.Default,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (onTitleClick != null) {
+                        Text(
+                            text = "⌄",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 if (subtitle.isNotBlank()) {
                     Text(
                         text = subtitle,
@@ -337,6 +367,8 @@ private fun OfflineGitTopBar(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            } else {
+                navigationIcon?.invoke()
             }
         },
         actions = {
@@ -382,8 +414,21 @@ private fun WideOfflineGitScreen(
     onAction: (OfflineGitAction) -> Unit,
     onConnectClick: () -> Unit,
 ) {
+    var isSidebarVisible by rememberSaveable { mutableStateOf(true) }
+    var showSourceSheet by remember { mutableStateOf(false) }
+    // Hoisted above the AnimatedVisibility: state remembered inside it is
+    // discarded when the sidebar collapses, which would reset its scroll.
+    val sidebarListState = rememberLazyListState()
     Scaffold(
-        topBar = { WideTopBar(state = state, onAction = onAction, onConnectClick = onConnectClick) },
+        topBar = {
+            WideTopBar(
+                state = state,
+                onAction = onAction,
+                onConnectClick = onConnectClick,
+                onToggleSidebar = { isSidebarVisible = !isSidebarVisible },
+                onSourceClick = { showSourceSheet = true },
+            )
+        },
         containerColor = MaterialTheme.colorScheme.background,
     ) { contentPadding ->
         Row(
@@ -391,25 +436,35 @@ private fun WideOfflineGitScreen(
                 .fillMaxSize()
                 .padding(contentPadding),
         ) {
-            LazyColumn(
-                modifier = Modifier
-                    .width(320.dp)
-                    .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.surface),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            AnimatedVisibility(
+                visible = isSidebarVisible,
+                enter = expandHorizontally(),
+                exit = shrinkHorizontally(),
             ) {
-                leftPaneItems(
-                    state = state,
-                    onAction = onAction,
-                )
+                Row {
+                    LazyColumn(
+                        state = sidebarListState,
+                        modifier = Modifier
+                            .width(320.dp)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.surface),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        leftPaneItems(
+                            state = state,
+                            onAction = onAction,
+                            onChooseSourceClick = { showSourceSheet = true },
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.outlineVariant),
+                    )
+                }
             }
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.outlineVariant),
-            )
             DiffViewerPane(
                 state = state,
                 onAction = onAction,
@@ -417,6 +472,59 @@ private fun WideOfflineGitScreen(
                     .weight(1f)
                     .fillMaxHeight(),
             )
+        }
+    }
+
+    if (showSourceSheet) {
+        SourceSheet(
+            state = state,
+            onAction = onAction,
+            onDismiss = { showSourceSheet = false },
+        )
+    }
+}
+
+// Repo/branch/download selection, moved out of the sidebar: picking a source is
+// an occasional task, so it lives behind the app-bar title instead of crowding
+// the commit list.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SourceSheet(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(),
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item {
+                SectionLabel(
+                    text = "Repositories",
+                    action = if (state.hasToken) {
+                        {
+                            TextButton(
+                                onClick = { onAction(OfflineGitAction.OnFetchRepositoriesClick) },
+                                enabled = !state.isLoading,
+                            ) {
+                                Text(text = "Refresh")
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                )
+            }
+            item { RepositorySection(state = state, onAction = onAction) }
+            item { SectionLabel(text = "Branches") }
+            item { BranchSection(state = state, onAction = onAction) }
+            item { DownloadOptionsCard(state = state, onAction = onAction) }
         }
     }
 }
@@ -427,14 +535,26 @@ private fun WideTopBar(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
     onConnectClick: () -> Unit,
+    onToggleSidebar: () -> Unit,
+    onSourceClick: () -> Unit,
 ) {
     val title = listOfNotNull(
         state.selectedRepository()?.name,
         state.selectedBranchName,
-    ).joinToString(" · ").ifBlank { "Offline GitHub Viewer" }
+    ).joinToString(" · ").ifBlank { "Choose repository" }
     OfflineGitTopBar(
         title = title,
         subtitle = state.commitsSubtitle(),
+        onTitleClick = onSourceClick,
+        navigationIcon = {
+            IconButton(onClick = onToggleSidebar) {
+                Text(
+                    text = "☰",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
         isLoading = state.isLoading,
         actions = {
             DiffViewerMode.entries.forEach { mode ->
@@ -454,40 +574,32 @@ private fun WideTopBar(
     )
 }
 
+// The sidebar is the review surface only: commits and the changed-file jump
+// list. Repo/branch/download selection lives in the app-bar SourceSheet.
 private fun LazyListScope.leftPaneItems(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
+    onChooseSourceClick: () -> Unit,
 ) {
     statusStripItem(
         error = state.error,
         syncStatus = state.syncStatus,
         onRetryClick = { onAction(OfflineGitAction.OnRetryClick) },
     )
-    item {
-        SectionLabel(
-            text = "Repositories",
-            action = if (state.hasToken) {
-                {
-                    TextButton(
-                        onClick = { onAction(OfflineGitAction.OnFetchRepositoriesClick) },
-                        enabled = !state.isLoading,
-                    ) {
-                        Text(text = "Refresh")
-                    }
-                }
-            } else {
-                null
-            },
-        )
-    }
-    item { RepositorySection(state = state, onAction = onAction) }
-    item { SectionLabel(text = "Branches") }
-    item { BranchSection(state = state, onAction = onAction) }
-    item { DownloadOptionsCard(state = state, onAction = onAction) }
     item { SectionLabel(text = "Commits") }
     item { CommitSection(state = state, onAction = onAction) }
+    if (state.commits.isEmpty()) {
+        item {
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onChooseSourceClick,
+            ) {
+                Text(text = "Choose repository & branch")
+            }
+        }
+    }
     item { SectionLabel(text = "Files · ${state.files.size} changed") }
-    item { ChangedFilesSection(state = state, onAction = onAction) }
+    item { ChangedFilesSection(state = state, onAction = onAction, showCommitMessage = false) }
 }
 
 @Composable
@@ -524,39 +636,158 @@ private fun LazyListScope.diffItems(
     }
 }
 
+// The wide layout shows the WHOLE commit: a commit header, then every changed
+// file stacked as header + diff with a gap in between, like a PR page. The
+// sidebar file list doubles as a jump index into this stack.
 @Composable
 private fun DiffViewerPane(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        val diff = state.diff
-        if (diff == null) {
+    val commit = state.selectedCommit()
+    val fileDiffs = state.fileDiffs
+    if (commit == null || fileDiffs.isEmpty()) {
+        Column(modifier = modifier.padding(16.dp)) {
             EmptyDiffCard()
-            return@Column
         }
+        return
+    }
 
-        DiffViewerHeader(
-            diff = diff,
-            selectedFile = state.selectedFile(),
-            commitMessage = state.selectedCommit()?.message,
-            viewerMode = state.viewerMode,
-            onAction = onAction,
-        )
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+    val listState = rememberLazyListState()
+    // Sidebar file clicks land here. Item 0 is the commit header, so file i
+    // sits at item i + 1; the first file scrolls to the top so the header
+    // stays visible.
+    LaunchedEffect(commit.sha, state.selectedFilePath) {
+        val index = fileDiffs.indexOfFirst { it.file.path == state.selectedFilePath }
+        if (index > 0) {
+            listState.animateScrollToItem(index + 1)
+        } else {
+            listState.scrollToItem(0)
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item(key = "commit-header") {
+            CommitDiffHeader(commit = commit, files = state.files)
+        }
+        fileDiffs.forEach { entry ->
+            item(key = "file:${entry.file.path}") {
+                FileDiffBlock(
+                    entry = entry,
+                    viewerMode = state.viewerMode,
+                    isSelected = entry.file.path == state.selectedFilePath,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommitDiffHeader(
+    commit: GithubCommitSummary,
+    files: List<GithubCommitFile>,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            diffItems(
-                diff = diff,
-                viewerMode = state.viewerMode,
+            CommitMessageAccordion(message = commit.message)
+            val byline = listOfNotNull(
+                commit.sha.take(7),
+                commit.authorName,
+                absoluteDateTime(commit.committedAt),
+            ).joinToString(" · ")
+            Text(
+                text = byline,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(
+                text = buildAnnotatedString {
+                    append("${files.size} ${if (files.size == 1) "file" else "files"} changed  ")
+                    withStyle(SpanStyle(color = OfflineGitPalette.Add)) { append("+${files.sumOf { it.additions }}") }
+                    append(" ")
+                    withStyle(SpanStyle(color = OfflineGitPalette.Del)) { append("−${files.sumOf { it.deletions }}") }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FileDiffBlock(
+    entry: CommitFileDiff,
+    viewerMode: DiffViewerMode,
+    isSelected: Boolean,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        FileDiffHeader(entry = entry, isSelected = isSelected)
+        val diff = entry.diff
+        if (diff != null) {
+            DiffSurface(diff = diff, viewerMode = viewerMode)
+        } else {
+            EmptySectionText(
+                text = entry.errorMessage?.let { "Unable to load diff: $it" } ?: "No diff available.",
+            )
+        }
+    }
+}
+
+@Composable
+private fun FileDiffHeader(
+    entry: CommitFileDiff,
+    isSelected: Boolean,
+) {
+    val file = entry.file
+    val container = if (isSelected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceContainer
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = container),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusSquare(status = file.status)
+            Text(
+                text = file.previousPath?.let { "$it → ${file.path}" } ?: file.path,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.MiddleEllipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = OfflineGitPalette.Add)) { append("+${file.additions}") }
+                    append(" ")
+                    withStyle(SpanStyle(color = OfflineGitPalette.Del)) { append("−${file.deletions}") }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+            )
+            entry.diff?.source?.let { source ->
+                StatusChip(text = source.chipLabel(), style = source.chipStyle())
+            }
         }
     }
 }
@@ -1188,10 +1419,15 @@ private fun GithubCommitSummary.metadataLine() = buildAnnotatedString {
 private fun ChangedFilesSection(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
+    // The wide layout hides this: its diff pane already leads with the commit
+    // message, so the sidebar keeps just the jump list.
+    showCommitMessage: Boolean = true,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        state.selectedCommit()?.let { commit ->
-            CommitMessageBlock(commit)
+        if (showCommitMessage) {
+            state.selectedCommit()?.let { commit ->
+                CommitMessageBlock(commit)
+            }
         }
         if (state.files.isEmpty()) {
             EmptySectionText(text = "Select a commit to see changed files.")
@@ -1257,7 +1493,9 @@ private fun ChangedFileRow(
             style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            // Middle ellipsis: the filename at the end of a long path is the
+            // part worth keeping visible.
+            overflow = TextOverflow.MiddleEllipsis,
             modifier = Modifier.weight(1f),
         )
         Text(
@@ -1308,7 +1546,7 @@ private fun EmptySectionText(text: String) {
 }
 
 @Composable
-private fun EmptyDiffCard() {
+private fun EmptyDiffCard(message: String? = null) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
@@ -1323,7 +1561,7 @@ private fun EmptyDiffCard() {
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "Select a commit file to view cached changes.",
+                text = message ?: "Select a commit to view its cached changes.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1356,8 +1594,8 @@ private fun DiffViewerHeader(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = FontFamily.Monospace,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
                     modifier = Modifier.weight(1f),
                 )
                 StatusChip(text = diff.source.chipLabel(), style = diff.source.chipStyle())
@@ -1728,7 +1966,8 @@ private fun DiffFile.subtitle(selectedFile: GithubCommitFile?): String = buildLi
     previousPath?.let { add("from $it") }
 }.joinToString(" • ")
 
-private fun OfflineGitState.selectedFile(): GithubCommitFile? = files.firstOrNull { it.path == selectedFilePath }
+private fun OfflineGitState.selectedFileDiff(): CommitFileDiff? =
+    fileDiffs.firstOrNull { it.file.path == selectedFilePath }
 
 private fun OfflineGitState.selectedRepository(): GithubRepository? = repositories
     .firstOrNull { it.id == selectedRepositoryId }
@@ -1854,6 +2093,33 @@ private fun previewState(): OfflineGitState {
             ),
         ),
     )
+    val secondFile = GithubCommitFile(
+        path = "docs/setup.md",
+        previousPath = null,
+        status = "added",
+        additions = 2,
+        deletions = 0,
+        blobSha = "demo-blob-2",
+        patch = null,
+    )
+    val secondDiff = DiffFile(
+        path = secondFile.path,
+        previousPath = null,
+        status = secondFile.status,
+        hunks = listOf(
+            DiffHunk(
+                oldStart = 0,
+                oldLineCount = 0,
+                newStart = 1,
+                newLineCount = 2,
+                lines = listOf(
+                    DiffLine(DiffLineType.HUNK_HEADER, null, null, "@@ -0,0 +1,2 @@"),
+                    DiffLine(DiffLineType.ADDITION, null, 1, "# Setup"),
+                    DiffLine(DiffLineType.ADDITION, null, 2, "Install the app."),
+                ),
+            ),
+        ),
+    )
     return OfflineGitState(
         repositories = listOf(repository),
         selectedRepositoryId = repository.id,
@@ -1861,9 +2127,12 @@ private fun previewState(): OfflineGitState {
         selectedBranchName = branch.name,
         commits = listOf(commit),
         selectedCommitSha = commit.sha,
-        files = listOf(file),
+        files = listOf(file, secondFile),
         selectedFilePath = file.path,
-        diff = diff,
+        fileDiffs = listOf(
+            CommitFileDiff(file = file, diff = diff),
+            CommitFileDiff(file = secondFile, diff = secondDiff),
+        ),
         downloadJob = BranchDownloadJob(
             id = "1:main",
             repositoryId = repository.id,

@@ -89,10 +89,11 @@ class OfflineGitViewModel(
                 filePath = null,
                 phonePane = PhonePane.FILES,
             )
-            is OfflineGitAction.OnFileClick -> load(
-                filePath = action.path,
-                phonePane = PhonePane.DIFF,
-            )
+            // Every file diff is loaded when the commit is selected, so a file
+            // click only moves the selection (the wide layout scrolls to it).
+            is OfflineGitAction.OnFileClick -> _state.update {
+                it.copy(selectedFilePath = action.path, phonePane = PhonePane.DIFF)
+            }
             is OfflineGitAction.OnViewerModeClick -> _state.update { it.copy(viewerMode = action.mode) }
         }
     }
@@ -425,11 +426,18 @@ class OfflineGitViewModel(
         }
         val files = details?.files.orEmpty()
         val selectedFile = files.firstOrNull { it.path == filePath } ?: files.firstOrNull()
-        val diff = if (commit == null || selectedFile == null) {
-            null
+        // Load every file's diff up front so the whole commit renders as one
+        // scrollable surface. A file whose diff fails keeps its slot with an
+        // inline error instead of aborting the rest of the commit.
+        val fileDiffs = if (commit == null) {
+            emptyList()
         } else {
-            diffProvider.getDiff(commitSha = commit.sha, file = selectedFile)
-                .dataOrNull { "Unable to load diff: ${it.toMessage()}" }
+            files.map { file ->
+                when (val result = diffProvider.getDiff(commitSha = commit.sha, file = file)) {
+                    is Result.Success -> CommitFileDiff(file = file, diff = result.data)
+                    is Result.Error -> CommitFileDiff(file = file, diff = null, errorMessage = result.error.toMessage())
+                }
+            }
         }
 
         _state.update {
@@ -444,7 +452,7 @@ class OfflineGitViewModel(
                 selectedCommitSha = commit?.sha,
                 files = files,
                 selectedFilePath = selectedFile?.path,
-                diff = diff,
+                fileDiffs = fileDiffs,
                 phonePane = phonePane ?: it.phonePane,
                 downloadJob = downloadJob,
                 error = null,
@@ -624,7 +632,7 @@ data class OfflineGitState(
     val selectedCommitSha: String? = null,
     val files: List<GithubCommitFile> = emptyList(),
     val selectedFilePath: String? = null,
-    val diff: DiffFile? = null,
+    val fileDiffs: List<CommitFileDiff> = emptyList(),
     val viewerMode: DiffViewerMode = DiffViewerMode.UNIFIED,
     val phonePane: PhonePane = PhonePane.REPOSITORIES,
     val downloadJob: BranchDownloadJob? = null,
@@ -639,6 +647,13 @@ data class OfflineGitState(
     val syncStatus: String? = null,
     val isLoading: Boolean = true,
     val error: String? = null,
+)
+
+/** One changed file in the selected commit, with its diff or the reason it failed to load. */
+data class CommitFileDiff(
+    val file: GithubCommitFile,
+    val diff: DiffFile?,
+    val errorMessage: String? = null,
 )
 
 sealed interface OfflineGitAction {

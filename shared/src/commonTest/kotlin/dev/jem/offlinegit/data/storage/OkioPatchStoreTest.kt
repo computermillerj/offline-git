@@ -43,6 +43,29 @@ class OkioPatchStoreTest {
     }
 
     @Test
+    fun `writes and reads patch for a very long repo path`() = runTest {
+        val root = testRoot()
+        val store = OkioPatchStore(root = root)
+        // Long enough that hex-encoding it as the cache file name would exceed
+        // the 255-byte filename limit.
+        val longPath = "very/deeply/nested/".repeat(10) + "GeneratedDatabaseImplementation.kt"
+        val patch = "@@ -1 +1 @@"
+
+        try {
+            assertEquals(
+                expected = Result.Success(Unit),
+                actual = store.writePatch(commitSha = "commit-sha", path = longPath, patch = patch),
+            )
+            assertEquals(
+                expected = Result.Success(patch),
+                actual = store.readPatch(commitSha = "commit-sha", path = longPath),
+            )
+        } finally {
+            FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)
+        }
+    }
+
+    @Test
     fun `missing patch returns not found`() = runTest {
         val root = testRoot()
         val store = OkioPatchStore(root = root)

@@ -16,7 +16,7 @@ class OkioBlobStore(
     override suspend fun hasBlob(sha: String): Result<Boolean, DataError.Local> = try {
         Result.Success(fileSystem.exists(blobPath(sha)))
     } catch (e: IOException) {
-        Result.Error(DataError.Local.UNKNOWN)
+        Result.Error(e.toLocalError("hasBlob($sha)"))
     }
 
     override suspend fun writeBlob(
@@ -30,7 +30,7 @@ class OkioBlobStore(
         }
         Result.Success(Unit)
     } catch (e: IOException) {
-        Result.Error(DataError.Local.UNKNOWN)
+        Result.Error(e.toLocalError("writeBlob($sha)"))
     }
 
     override suspend fun readBlob(sha: String): Result<ByteArray, DataError.Local> = try {
@@ -44,7 +44,7 @@ class OkioBlobStore(
             },
         )
     } catch (e: IOException) {
-        Result.Error(DataError.Local.UNKNOWN)
+        Result.Error(e.toLocalError("readBlob($sha)"))
     }
 
     private fun blobPath(sha: String): Path = root

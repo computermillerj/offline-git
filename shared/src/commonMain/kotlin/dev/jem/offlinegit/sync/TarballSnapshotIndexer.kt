@@ -39,6 +39,9 @@ class TarballSnapshotIndexer(
         }
         Result.Success(blobs)
     } catch (e: Exception) {
+        // Keep the root cause in logcat; the enum alone reads as an opaque
+        // "local storage error" in the UI.
+        println("OfflineGit: tarball indexing failed: ${e.stackTraceToString()}")
         Result.Error(DataError.Local.UNKNOWN)
     }
 
