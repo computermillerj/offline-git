@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -507,19 +508,11 @@ private fun LazyListScope.diffItems(
     diff: DiffFile,
     viewerMode: DiffViewerMode,
 ) {
-    when (viewerMode) {
-        DiffViewerMode.UNIFIED -> items(
-            items = diff.hunks,
-            key = { hunk -> "unified:${hunk.oldStart}:${hunk.newStart}" },
-        ) { hunk ->
-            UnifiedDiffHunkCard(hunk = hunk)
-        }
-        DiffViewerMode.SIDE_BY_SIDE -> items(
-            items = diff.hunks,
-            key = { hunk -> "side:${hunk.oldStart}:${hunk.newStart}" },
-        ) { hunk ->
-            SideBySideDiffHunkCard(hunk = hunk)
-        }
+    // The whole file is one continuous surface: the outer LazyColumn scrolls
+    // vertically, while a single shared ScrollState scrolls every line
+    // horizontally in unison so long lines are reachable instead of clipped.
+    item(key = "diff:${diff.path}:$viewerMode") {
+        DiffSurface(diff = diff, viewerMode = viewerMode)
     }
 }
 
@@ -1409,19 +1402,29 @@ private fun DiffModeButton(
 }
 
 @Composable
-private fun UnifiedDiffHunkCard(hunk: DiffHunk) {
-    val horizontalScrollState = rememberScrollState()
+private fun DiffSurface(
+    diff: DiffFile,
+    viewerMode: DiffViewerMode,
+) {
+    val horizontalScroll = rememberScrollState()
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(
             modifier = Modifier
-                .horizontalScroll(horizontalScrollState)
+                .horizontalScroll(horizontalScroll)
+                .width(IntrinsicSize.Max)
                 .padding(vertical = 8.dp),
         ) {
-            hunk.lines.forEach { line ->
-                DiffLineRow(line = line)
+            when (viewerMode) {
+                DiffViewerMode.UNIFIED -> diff.hunks.forEach { hunk ->
+                    hunk.lines.forEach { line -> DiffLineRow(line = line) }
+                }
+                DiffViewerMode.SIDE_BY_SIDE -> diff.hunks.forEach { hunk ->
+                    HunkHeaderRow(text = hunk.headerText())
+                    SideBySideHunk(rows = hunk.toSideBySideRows())
+                }
             }
         }
     }
@@ -1470,21 +1473,6 @@ private fun DiffLineRow(line: DiffLine) {
 }
 
 @Composable
-private fun SideBySideDiffHunkCard(hunk: DiffHunk) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(modifier = Modifier.padding(vertical = 8.dp)) {
-            HunkHeaderRow(text = hunk.headerText())
-            hunk.toSideBySideRows().forEach { row ->
-                SideBySideLineRow(row = row)
-            }
-        }
-    }
-}
-
-@Composable
 private fun HunkHeaderRow(text: String) {
     Text(
         text = text,
@@ -1496,33 +1484,42 @@ private fun HunkHeaderRow(text: String) {
         color = DiffLineType.HUNK_HEADER.textColor(),
         fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.SemiBold,
-        maxLines = 1,
-        overflow = TextOverflow.Clip,
         softWrap = false,
     )
 }
 
 @Composable
-private fun SideBySideLineRow(row: SideBySideDiffRow) {
-    Row(modifier = Modifier.fillMaxWidth()) {
-        SideBySideCell(
-            lineNumber = row.oldLineNumber,
-            text = row.oldText,
-            type = row.oldType,
-            modifier = Modifier.weight(1f),
-        )
+private fun SideBySideHunk(rows: List<SideBySideDiffRow>) {
+    // Two independent columns, each sized to its own widest line via
+    // IntrinsicSize.Max, so long lines extend and are revealed by the shared
+    // horizontal scroll instead of being split 50/50 and clipped.
+    Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+            rows.forEach { row ->
+                SideBySideCell(
+                    lineNumber = row.oldLineNumber,
+                    text = row.oldText,
+                    type = row.oldType,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
         Box(
             modifier = Modifier
                 .width(1.dp)
-                .height(24.dp)
+                .fillMaxHeight()
                 .background(MaterialTheme.colorScheme.outlineVariant),
         )
-        SideBySideCell(
-            lineNumber = row.newLineNumber,
-            text = row.newText,
-            type = row.newType,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+            rows.forEach { row ->
+                SideBySideCell(
+                    lineNumber = row.newLineNumber,
+                    text = row.newText,
+                    type = row.newType,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
 
