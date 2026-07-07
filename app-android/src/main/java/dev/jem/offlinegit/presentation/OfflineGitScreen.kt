@@ -27,8 +27,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -36,8 +38,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,18 +96,37 @@ fun OfflineGitScreen(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
 ) {
+    var showConnectSheet by remember { mutableStateOf(false) }
+
+    // Close the connect sheet once a token is stored (sign-in succeeded).
+    LaunchedEffect(state.hasToken) {
+        if (state.hasToken && !state.isAuthPolling) {
+            showConnectSheet = false
+        }
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         if (maxWidth >= WideLayoutBreakpoint) {
             WideOfflineGitScreen(
                 state = state,
                 onAction = onAction,
+                onConnectClick = { showConnectSheet = true },
             )
         } else {
             PhoneOfflineGitScreen(
                 state = state,
                 onAction = onAction,
+                onConnectClick = { showConnectSheet = true },
             )
         }
+    }
+
+    if (showConnectSheet) {
+        ConnectAccountSheet(
+            state = state,
+            onAction = onAction,
+            onDismiss = { showConnectSheet = false },
+        )
     }
 }
 
@@ -109,9 +135,19 @@ fun OfflineGitScreen(
 private fun PhoneOfflineGitScreen(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
+    onConnectClick: () -> Unit,
 ) {
     Scaffold(
         topBar = { PhoneTopBar(state = state, onAction = onAction) },
+        floatingActionButton = {
+            if (state.phonePane == PhonePane.REPOSITORIES) {
+                ExtendedFloatingActionButton(
+                    text = { Text(text = if (state.hasToken) "Account" else "Connect account") },
+                    icon = { Text(text = if (state.hasToken) "◉" else "＋") },
+                    onClick = onConnectClick,
+                )
+            }
+        },
         containerColor = MaterialTheme.colorScheme.background,
     ) { contentPadding ->
         LazyColumn(
@@ -129,43 +165,46 @@ private fun PhoneOfflineGitScreen(
             when (state.phonePane) {
                 PhonePane.REPOSITORIES -> {
                     item {
-                        GithubSyncCard(
-                            state = state,
-                            onAction = onAction,
-                        )
-                    }
-                    item {
                         RepositorySection(
                             state = state,
                             onAction = onAction,
                         )
                     }
-                }
-                PhonePane.BRANCHES -> {
                     item {
-                        GithubSyncCard(
+                        SyncControls(
                             state = state,
                             onAction = onAction,
+                            showBranchControls = false,
                         )
                     }
+                }
+                PhonePane.BRANCHES -> {
                     item {
                         BranchSection(
                             state = state,
                             onAction = onAction,
                         )
                     }
+                    item {
+                        SyncControls(
+                            state = state,
+                            onAction = onAction,
+                            showRefreshRepos = false,
+                        )
+                    }
                 }
                 PhonePane.COMMITS -> {
                     item {
-                        GithubSyncCard(
+                        CommitSection(
                             state = state,
                             onAction = onAction,
                         )
                     }
                     item {
-                        CommitSection(
+                        SyncControls(
                             state = state,
                             onAction = onAction,
+                            showRefreshRepos = false,
                         )
                     }
                 }
@@ -318,6 +357,7 @@ private fun DiffViewerMode.label(): String = when (this) {
 private fun WideOfflineGitScreen(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
+    onConnectClick: () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -331,6 +371,7 @@ private fun WideOfflineGitScreen(
             navigationItems(
                 state = state,
                 onAction = onAction,
+                onConnectClick = onConnectClick,
             )
         }
         Box(
@@ -352,6 +393,7 @@ private fun WideOfflineGitScreen(
 private fun LazyListScope.navigationItems(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
+    onConnectClick: () -> Unit,
 ) {
     item {
         Header(
@@ -362,7 +404,15 @@ private fun LazyListScope.navigationItems(
         )
     }
     item {
-        GithubSyncCard(
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onConnectClick,
+        ) {
+            Text(text = if (state.hasToken) "Account" else "Connect account")
+        }
+    }
+    item {
+        SyncControls(
             state = state,
             onAction = onAction,
         )
@@ -549,107 +599,144 @@ private fun LazyListScope.statusStripItem(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GithubSyncCard(
+private fun ConnectAccountSheet(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    val hasUsableToken = state.hasToken || state.githubToken.isNotBlank()
-    SectionCard(title = "GitHub sync") {
-        if (state.hasToken) {
-            Text(
-                text = "GitHub token saved securely",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        OutlinedTextField(
-            value = state.authClientId,
-            onValueChange = { onAction(OfflineGitAction.OnAuthClientIdChange(it)) },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(text = "GitHub OAuth client ID") },
-            singleLine = true,
-            enabled = !state.isAuthPolling,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Button(
-                modifier = Modifier.weight(1f),
-                enabled = state.authClientId.isNotBlank() && !state.isAuthPolling && !state.isLoading,
-                onClick = { onAction(OfflineGitAction.OnStartDeviceAuthClick) },
-            ) {
-                Text(text = "Device sign in")
-            }
-            OutlinedButton(
-                modifier = Modifier.weight(1f),
-                enabled = state.isAuthPolling,
-                onClick = { onAction(OfflineGitAction.OnCancelDeviceAuthClick) },
-            ) {
-                Text(text = "Cancel")
-            }
-        }
-        if (state.deviceUserCode != null && state.deviceVerificationUri != null) {
-            DeviceCodeCard(
-                userCode = state.deviceUserCode,
-                verificationUri = state.deviceVerificationUri,
-            )
-        }
-        state.authMessage?.let { message ->
             Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = "Connect a GitHub account",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
             )
-        }
-        OutlinedTextField(
-            value = state.githubToken,
-            onValueChange = { onAction(OfflineGitAction.OnTokenChange(it)) },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(text = "Personal access token fallback") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-        )
-        OutlinedTextField(
-            value = state.commitLimitText,
-            onValueChange = { onAction(OfflineGitAction.OnCommitLimitChange(it)) },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(text = "Commit download limit") },
-            singleLine = true,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+            if (state.hasToken) {
+                Text(
+                    text = "GitHub token saved securely",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            OutlinedTextField(
+                value = state.authClientId,
+                onValueChange = { onAction(OfflineGitAction.OnAuthClientIdChange(it)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(text = "GitHub OAuth client ID") },
+                singleLine = true,
+                enabled = !state.isAuthPolling,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    enabled = state.authClientId.isNotBlank() && !state.isAuthPolling && !state.isLoading,
+                    onClick = { onAction(OfflineGitAction.OnStartDeviceAuthClick) },
+                ) {
+                    Text(text = "Device sign in")
+                }
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    enabled = state.isAuthPolling,
+                    onClick = { onAction(OfflineGitAction.OnCancelDeviceAuthClick) },
+                ) {
+                    Text(text = "Cancel")
+                }
+            }
+            if (state.deviceUserCode != null && state.deviceVerificationUri != null) {
+                DeviceCodeCard(
+                    userCode = state.deviceUserCode,
+                    verificationUri = state.deviceVerificationUri,
+                )
+            }
+            state.authMessage?.let { message ->
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedTextField(
+                value = state.githubToken,
+                onValueChange = { onAction(OfflineGitAction.OnTokenChange(it)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(text = "Personal access token fallback") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+            )
             Button(
-                modifier = Modifier.weight(1f),
-                enabled = hasUsableToken && !state.isLoading,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = state.githubToken.isNotBlank() && !state.isLoading,
                 onClick = { onAction(OfflineGitAction.OnFetchRepositoriesClick) },
             ) {
-                Text(text = "Refresh repos")
+                Text(text = "Save token & sync")
             }
+            if (state.hasToken) {
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.isLoading,
+                    onClick = {
+                        onAction(OfflineGitAction.OnSignOutClick)
+                        onDismiss()
+                    },
+                ) {
+                    Text(text = "Sign out")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncControls(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+    showRefreshRepos: Boolean = true,
+    showBranchControls: Boolean = true,
+) {
+    if (!state.hasToken) {
+        return
+    }
+    SectionCard(title = "Sync") {
+        if (showRefreshRepos) {
             Button(
-                modifier = Modifier.weight(1f),
-                enabled = hasUsableToken && state.selectedRepositoryId != null && !state.isLoading,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isLoading,
+                onClick = { onAction(OfflineGitAction.OnFetchRepositoriesClick) },
+            ) {
+                Text(text = "Refresh repositories")
+            }
+        }
+        if (showBranchControls && state.selectedRepositoryId != null) {
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isLoading,
                 onClick = { onAction(OfflineGitAction.OnFetchBranchesClick) },
             ) {
                 Text(text = "Refresh branches")
             }
-        }
-        Button(
-            modifier = Modifier.fillMaxWidth(),
-            enabled = hasUsableToken && state.selectedRepositoryId != null && state.selectedBranchName != null && !state.isLoading,
-            onClick = { onAction(OfflineGitAction.OnDownloadBranchClick) },
-        ) {
-            Text(text = "Download / refresh selected branch")
-        }
-        OutlinedButton(
-            modifier = Modifier.fillMaxWidth(),
-            enabled = state.hasToken && !state.isLoading,
-            onClick = { onAction(OfflineGitAction.OnSignOutClick) },
-        ) {
-            Text(text = "Sign out")
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = state.selectedBranchName != null && !state.isLoading,
+                onClick = { onAction(OfflineGitAction.OnDownloadBranchClick) },
+            ) {
+                Text(text = "Download / refresh selected branch")
+            }
         }
         state.downloadJob?.let { downloadJob ->
             Text(
