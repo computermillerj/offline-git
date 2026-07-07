@@ -1,6 +1,7 @@
 package dev.jem.offlinegit.presentation
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -29,12 +30,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -186,10 +189,9 @@ private fun PhoneOfflineGitScreen(
                         )
                     }
                     item {
-                        SyncControls(
+                        DownloadOptionsCard(
                             state = state,
                             onAction = onAction,
-                            showRefreshRepos = false,
                         )
                     }
                 }
@@ -881,18 +883,211 @@ private fun BranchSection(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
 ) {
-    SectionCard(title = "Branches") {
+    val defaultBranch = state.selectedRepository()?.defaultBranch
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (state.branches.isEmpty()) {
-            EmptySectionText(text = "Select a repository and fetch branches.")
+            EmptySectionText(text = "Refresh branches to choose one to download.")
         }
         state.branches.forEach { branch ->
-            SelectableRow(
-                title = branch.name,
-                subtitle = branch.headSha.take(12),
+            BranchRow(
+                branch = branch,
+                isDefault = branch.name == defaultBranch,
                 isSelected = branch.name == state.selectedBranchName,
                 onClick = { onAction(OfflineGitAction.OnBranchClick(branch.name)) },
             )
         }
+        if (state.hasToken) {
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = state.selectedRepositoryId != null && !state.isLoading,
+                onClick = { onAction(OfflineGitAction.OnFetchBranchesClick) },
+            ) {
+                Text(text = "Refresh branches")
+            }
+        }
+    }
+}
+
+@Composable
+private fun BranchRow(
+    branch: GithubBranch,
+    isDefault: Boolean,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    val background = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = branch.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (isDefault) {
+                    StatusChip(text = "default", style = ChipStyle.ACCENT)
+                }
+            }
+            Text(
+                text = "HEAD ${branch.headSha.take(7)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        if (isSelected) {
+            StatusChip(text = "selected", style = ChipStyle.OK, showDot = true)
+        }
+    }
+}
+
+private val CommitDepthOptions = listOf(50, 100, 250)
+
+@Composable
+private fun DownloadOptionsCard(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
+    SectionCard(title = "Download options") {
+        val selectedDepth = state.commitLimitText.toIntOrNull()
+        SegmentedControl(
+            options = CommitDepthOptions,
+            selected = selectedDepth,
+            label = { if (it == 100) "100 commits" else it.toString() },
+            onSelect = { onAction(OfflineGitAction.OnCommitLimitChange(it.toString())) },
+        )
+        OptionToggleRow(text = "Skip binary & LFS files", checked = true)
+        OptionToggleRow(text = "Cache blobs for side-by-side diff", checked = true)
+        Text(
+            text = "Binary/LFS files are always skipped and text blobs cached in this build.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            enabled = state.hasToken && state.selectedBranchName != null && !state.isLoading,
+            onClick = { onAction(OfflineGitAction.OnDownloadBranchClick) },
+        ) {
+            Text(
+                text = state.selectedBranchName
+                    ?.let { "Download $it" }
+                    ?: "Select a branch to download",
+            )
+        }
+        state.downloadJob?.let { downloadJob ->
+            DownloadProgress(job = downloadJob, syncStatus = state.syncStatus)
+        }
+    }
+}
+
+@Composable
+private fun DownloadProgress(
+    job: BranchDownloadJob,
+    syncStatus: String?,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (job.status == BranchDownloadJobStatus.RUNNING) {
+            LinearProgressIndicator(
+                progress = { job.progress.toFloat().coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = syncStatus ?: job.statusText(),
+                style = MaterialTheme.typography.bodySmall,
+                color = when (job.status) {
+                    BranchDownloadJobStatus.COMPLETED -> MaterialTheme.colorScheme.primary
+                    BranchDownloadJobStatus.FAILED -> MaterialTheme.colorScheme.error
+                    BranchDownloadJobStatus.RUNNING -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (job.status == BranchDownloadJobStatus.RUNNING) {
+                Text(
+                    text = "${(job.progress * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> SegmentedControl(
+    options: List<T>,
+    selected: T?,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { option ->
+            val isOn = option == selected
+            val border = if (isOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+            val container = if (isOn) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+            val content = if (isOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(container)
+                    .border(1.dp, border, RoundedCornerShape(9.dp))
+                    .clickable { onSelect(option) }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label(option),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = content,
+                    fontWeight = if (isOn) FontWeight.SemiBold else FontWeight.Normal,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptionToggleRow(
+    text: String,
+    checked: Boolean,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+        )
     }
 }
 
