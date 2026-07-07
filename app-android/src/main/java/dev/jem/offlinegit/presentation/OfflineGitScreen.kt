@@ -785,19 +785,95 @@ private fun RepositorySection(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
 ) {
-    SectionCard(title = "Repositories") {
-        if (state.repositories.isEmpty()) {
-            EmptySectionText(text = "Fetch repositories or use the demo data.")
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        OutlinedTextField(
+            value = state.repositorySearchQuery,
+            onValueChange = { onAction(OfflineGitAction.OnRepositorySearchChange(it)) },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text(text = "Search repositories…") },
+            singleLine = true,
+        )
+        val query = state.repositorySearchQuery.trim()
+        val repositories = if (query.isEmpty()) {
+            state.repositories
+        } else {
+            state.repositories.filter {
+                it.name.contains(query, ignoreCase = true) || it.owner.contains(query, ignoreCase = true)
+            }
         }
-        state.repositories.forEach { repository ->
-            SelectableRow(
-                title = "${repository.owner}/${repository.name}",
-                subtitle = "default: ${repository.defaultBranch}",
+        if (repositories.isEmpty()) {
+            EmptySectionText(
+                text = if (state.repositories.isEmpty()) {
+                    "Connect a GitHub account to sync repositories."
+                } else {
+                    "No repositories match \"$query\"."
+                },
+            )
+        }
+        repositories.forEach { repository ->
+            RepositoryRow(
+                repository = repository,
                 isSelected = repository.id == state.selectedRepositoryId,
+                isDownloaded = repository.id in state.downloadedRepositoryIds,
                 onClick = { onAction(OfflineGitAction.OnRepositoryClick(repository.id)) },
             )
         }
     }
+}
+
+@Composable
+private fun RepositoryRow(
+    repository: GithubRepository,
+    isSelected: Boolean,
+    isDownloaded: Boolean,
+    onClick: () -> Unit,
+) {
+    val background = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AvatarTile(label = repository.name)
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = repository.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (isDownloaded) {
+                    StatusChip(text = "downloaded", style = ChipStyle.ACCENT)
+                }
+                if (repository.isPrivate) {
+                    StatusChip(text = "private", style = ChipStyle.NEUTRAL)
+                }
+            }
+            Text(
+                text = repository.metadataLine(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun GithubRepository.metadataLine(): String {
+    val updated = relativeTime(updatedAt)?.let { "updated $it" }
+    return listOfNotNull(defaultBranch, updated).joinToString(" · ")
 }
 
 @Composable

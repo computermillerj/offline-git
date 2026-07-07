@@ -38,4 +38,7 @@ interface RepositoryStore {
         repositoryId: Long,
         branchName: String,
     ): Result<BranchDownloadJob?, DataError.Local>
+
+    /** Ids of repositories with at least one completed branch download. */
+    suspend fun getDownloadedRepositoryIds(): Result<Set<Long>, DataError.Local>
 }

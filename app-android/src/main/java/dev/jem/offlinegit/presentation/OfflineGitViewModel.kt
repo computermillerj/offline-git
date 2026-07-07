@@ -70,6 +70,7 @@ class OfflineGitViewModel(
             is OfflineGitAction.OnTokenChange -> _state.update { it.copy(githubToken = action.token) }
             is OfflineGitAction.OnAuthClientIdChange -> _state.update { it.copy(authClientId = action.clientId) }
             is OfflineGitAction.OnCommitLimitChange -> _state.update { it.copy(commitLimitText = action.limit) }
+            is OfflineGitAction.OnRepositorySearchChange -> _state.update { it.copy(repositorySearchQuery = action.query) }
             is OfflineGitAction.OnRepositoryClick -> load(
                 repositoryId = action.repositoryId,
                 branchName = null,
@@ -381,6 +382,10 @@ class OfflineGitViewModel(
         val repositories = repositoryStore.getRepositories()
             .dataOrNull { "Unable to load repositories: ${it.toMessage()}" }
             ?: return
+        val downloadedRepositoryIds = when (val result = repositoryStore.getDownloadedRepositoryIds()) {
+            is Result.Success -> result.data
+            is Result.Error -> emptySet()
+        }
         val repository = repositories.firstOrNull { it.id == repositoryId } ?: repositories.firstOrNull()
         if (repository == null) {
             _state.update { it.copy(isLoading = false, repositories = emptyList()) }
@@ -431,6 +436,7 @@ class OfflineGitViewModel(
             it.copy(
                 isLoading = false,
                 repositories = repositories,
+                downloadedRepositoryIds = downloadedRepositoryIds,
                 selectedRepositoryId = repository.id,
                 branches = branches,
                 selectedBranchName = branch?.name,
@@ -609,6 +615,8 @@ class MutableTokenStore : WritableTokenStore {
 @Stable
 data class OfflineGitState(
     val repositories: List<GithubRepository> = emptyList(),
+    val downloadedRepositoryIds: Set<Long> = emptySet(),
+    val repositorySearchQuery: String = "",
     val selectedRepositoryId: Long? = null,
     val branches: List<GithubBranch> = emptyList(),
     val selectedBranchName: String? = null,
@@ -645,6 +653,7 @@ sealed interface OfflineGitAction {
     data class OnTokenChange(val token: String) : OfflineGitAction
     data class OnAuthClientIdChange(val clientId: String) : OfflineGitAction
     data class OnCommitLimitChange(val limit: String) : OfflineGitAction
+    data class OnRepositorySearchChange(val query: String) : OfflineGitAction
     data class OnRepositoryClick(val repositoryId: Long) : OfflineGitAction
     data class OnBranchClick(val branchName: String) : OfflineGitAction
     data class OnCommitClick(val commitSha: String) : OfflineGitAction

@@ -280,6 +280,13 @@ class OfflineGitViewModelTest {
         ): Result<BranchDownloadJob?, DataError.Local> = Result.Success(
             downloadJobs.lastOrNull { it.repositoryId == repositoryId && it.branchName == branchName },
         )
+
+        override suspend fun getDownloadedRepositoryIds(): Result<Set<Long>, DataError.Local> = Result.Success(
+            downloadJobs
+                .filter { it.status == BranchDownloadJobStatus.COMPLETED }
+                .map { it.repositoryId }
+                .toSet(),
+        )
     }
 
     private class FakeGithubRemoteDataSource(

@@ -154,6 +154,10 @@ SELECT * FROM DownloadJob
 WHERE repositoryId = ? AND branchName = ?
 LIMIT 1;
 
+selectDownloadedRepositoryIds:
+SELECT DISTINCT repositoryId FROM DownloadJob
+WHERE status = 'COMPLETED';
+
 upsertDownloadJob:
 INSERT OR REPLACE INTO DownloadJob(
     id,

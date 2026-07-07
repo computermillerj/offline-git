@@ -182,6 +182,10 @@ class SqlDelightRepositoryStore(
             ?.toBranchDownloadJob()
     }
 
+    override suspend fun getDownloadedRepositoryIds(): Result<Set<Long>, DataError.Local> = localResult {
+        queries.selectDownloadedRepositoryIds().executeAsList().toSet()
+    }
+
     private inline fun <T> localResult(block: () -> T): Result<T, DataError.Local> = try {
         Result.Success(block())
     } catch (e: Exception) {

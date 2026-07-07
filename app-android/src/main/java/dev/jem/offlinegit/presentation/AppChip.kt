@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +63,38 @@ fun StatusChip(
             text = text,
             color = colors.content,
             fontSize = 10.5.sp,
+        )
+    }
+}
+
+private val AvatarColors = listOf(
+    Color(0xFF7CC4F8),
+    Color(0xFFB7E6B0),
+    Color(0xFFE8BF6A),
+    Color(0xFFCF8EE9),
+    Color(0xFFF2B8B5),
+)
+
+/** Colored initial tile from the mockup's `.avatar` rule. Color is stable per label. */
+@Composable
+fun AvatarTile(
+    label: String,
+    modifier: Modifier = Modifier,
+    size: Int = 34,
+) {
+    val color = AvatarColors[label.sumOf { it.code }.mod(AvatarColors.size)]
+    Box(
+        modifier = modifier
+            .size(size.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(color),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+            color = Color(0xFF0E1218),
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
         )
     }
 }
