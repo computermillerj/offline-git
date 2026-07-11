@@ -50,7 +50,10 @@ fun GithubCommitDto.toGithubCommitSummary(): GithubCommitSummary = GithubCommitS
     authorName = commit.author?.name ?: commit.committer?.name,
     authorEmail = commit.author?.email ?: commit.committer?.email,
     message = commit.message,
-    committedAt = commit.author?.date ?: commit.committer?.date,
+    // GitHub's commit list is ordered by committer date, so the label shown on
+    // each row must use that same date — the author date is non-monotonic after
+    // a rebase/cherry-pick and makes the list read as "5d, 4d, 5d" out of order.
+    committedAt = commit.committer?.date ?: commit.author?.date,
     additions = files.sumOf { it.additions },
     deletions = files.sumOf { it.deletions },
     parentCount = parents.size,

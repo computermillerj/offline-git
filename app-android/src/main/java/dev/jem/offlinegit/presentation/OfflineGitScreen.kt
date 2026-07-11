@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -773,8 +774,20 @@ private fun FileDiffBlock(
     viewerMode: DiffViewerMode,
     isSelected: Boolean,
 ) {
+    // Tapping the header collapses the diff — a way to fold away a huge file
+    // (a new schema dump, generated code) while still reviewing the rest of the
+    // commit. State is remembered per file path so it survives scroll recycling.
+    var collapsed by remember(entry.file.path) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        FileDiffHeader(entry = entry, isSelected = isSelected)
+        FileDiffHeader(
+            entry = entry,
+            isSelected = isSelected,
+            collapsed = collapsed,
+            onToggleCollapsed = { collapsed = !collapsed },
+        )
+        if (collapsed) {
+            return@Column
+        }
         val diff = entry.diff
         if (diff != null) {
             DiffSurface(diff = diff, viewerMode = viewerMode)
@@ -790,6 +803,8 @@ private fun FileDiffBlock(
 private fun FileDiffHeader(
     entry: CommitFileDiff,
     isSelected: Boolean,
+    collapsed: Boolean,
+    onToggleCollapsed: () -> Unit,
 ) {
     val file = entry.file
     val container = if (isSelected) {
@@ -802,10 +817,17 @@ private fun FileDiffHeader(
         colors = CardDefaults.cardColors(containerColor = container),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier
+                .clickable(onClick = onToggleCollapsed)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Text(
+                text = if (collapsed) "▸" else "▾",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             StatusSquare(status = file.status)
             Text(
                 text = file.previousPath?.let { "$it → ${file.path}" } ?: file.path,
@@ -1787,17 +1809,26 @@ private fun DiffSurface(
         // horizontalScroll(enabled = false) keeps the overflow layout, clipping,
         // and programmatic scrolling but drops its greedy gesture handling; the
         // biased modifier claims only clearly-sideways drags in its place.
-        Column(
-            modifier = rememberSidewaysDragModifier(horizontalScroll)
-                .horizontalScroll(horizontalScroll, enabled = false)
-                .width(IntrinsicSize.Max)
-                .padding(vertical = 8.dp),
-        ) {
-            when (viewerMode) {
-                DiffViewerMode.UNIFIED -> diff.hunks.forEach { hunk ->
-                    hunk.lines.forEach { line -> DiffLineRow(line = line) }
+        //
+        // widthIn(min = viewport) floors the content at the card width so a file
+        // whose longest line is narrower than the screen still stretches every
+        // row's tinted background to the edge instead of stopping mid-screen;
+        // width(IntrinsicSize.Max) still lets wider files overflow and scroll.
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val minRowWidth = maxWidth
+            Column(
+                modifier = rememberSidewaysDragModifier(horizontalScroll)
+                    .horizontalScroll(horizontalScroll, enabled = false)
+                    .widthIn(min = minRowWidth)
+                    .width(IntrinsicSize.Max)
+                    .padding(vertical = 8.dp),
+            ) {
+                when (viewerMode) {
+                    DiffViewerMode.UNIFIED -> diff.hunks.forEach { hunk ->
+                        hunk.lines.forEach { line -> DiffLineRow(line = line) }
+                    }
+                    DiffViewerMode.SIDE_BY_SIDE -> SideBySideDiff(rows = diff.toSideBySideRows())
                 }
-                DiffViewerMode.SIDE_BY_SIDE -> SideBySideDiff(rows = diff.toSideBySideRows())
             }
         }
     }

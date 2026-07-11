@@ -77,6 +77,45 @@ class GithubBranchDownloaderTest {
     }
 
     @Test
+    fun `downloadBranch skips commits whose details are already stored`() = runTest {
+        val repository = aRepository()
+        val branch = GithubBranch(name = "main", headSha = "head-sha")
+        val commit = aCommitSummary()
+        val details = aCommitDetails()
+        val remoteDataSource = FakeGithubRemoteDataSource(
+            commitsResult = Result.Success(listOf(commit)),
+            detailsResults = mapOf(commit.sha to Result.Success(details)),
+        )
+        val repositoryStore = FakeRepositoryStore()
+        val downloader = GithubBranchDownloader(
+            remoteDataSource = remoteDataSource,
+            repositoryStore = repositoryStore,
+            patchStore = FakePatchStore(),
+            blobStore = FakeBlobStore(),
+        )
+
+        // First download stores the commit; the second must reuse it.
+        downloader.downloadBranch(repository = repository, branch = branch, commitLimit = 1).toList()
+        val secondRun = downloader.downloadBranch(
+            repository = repository,
+            branch = branch,
+            commitLimit = 1,
+        ).toList()
+
+        assertEquals(listOf(commit.sha), remoteDataSource.detailRequests)
+        assertEquals(
+            expected = listOf(
+                BranchDownloadProgress.Started,
+                BranchDownloadProgress.CommitsStored(count = 1),
+                BranchDownloadProgress.CommitStored(sha = commit.sha, completed = 1, total = 1),
+                BranchDownloadProgress.Completed,
+            ),
+            actual = secondRun,
+        )
+        assertEquals(BranchDownloadJobStatus.COMPLETED, repositoryStore.downloadJobs.last().status)
+    }
+
+    @Test
     fun `downloadBranch stops when commit details fail`() = runTest {
         val repository = aRepository()
         val branch = GithubBranch(name = "main", headSha = "head-sha")
@@ -157,6 +196,7 @@ class GithubBranchDownloaderTest {
         private val detailsResults: Map<String, Result<GithubCommitDetails, DataError.Network>>,
     ) : GithubRemoteDataSource {
         val commitLimits = mutableListOf<Int>()
+        val detailRequests = mutableListOf<String>()
 
         override suspend fun getAuthenticatedUser(): Result<GithubAccount, DataError.Network> = error("not used")
 
@@ -181,7 +221,10 @@ class GithubBranchDownloaderTest {
             owner: String,
             repository: String,
             sha: String,
-        ): Result<GithubCommitDetails, DataError.Network> = detailsResults.getValue(sha)
+        ): Result<GithubCommitDetails, DataError.Network> {
+            detailRequests += sha
+            return detailsResults.getValue(sha)
+        }
 
         override suspend fun getBlob(
             owner: String,
@@ -270,7 +313,9 @@ class GithubBranchDownloaderTest {
         }
 
         override suspend fun getCommitDetails(sha: String): Result<GithubCommitDetails, DataError.Local> =
-            Result.Success(commitDetails.first { it.sha == sha })
+            commitDetails.firstOrNull { it.sha == sha }
+                ?.let { Result.Success(it) }
+                ?: Result.Error(DataError.Local.NOT_FOUND)
 
         override suspend fun upsertDownloadJob(job: BranchDownloadJob): EmptyResult<DataError.Local> {
             downloadJobs += job

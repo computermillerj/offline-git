@@ -111,6 +111,33 @@ class GithubBranchDownloader(
         emit(BranchDownloadProgress.CommitsStored(commits.size))
 
         commits.forEachIndexed { index, commit ->
+            // Re-downloading a branch shouldn't re-fetch commits already stored
+            // offline. A commit whose files are present has had its details,
+            // patches, and blobs written, so skip straight to progress. (Blob
+            // reuse is already handled per-blob, but this also spares the
+            // per-commit detail request — the bulk of the network cost.)
+            if (hasStoredDetails(commit.sha)) {
+                progress = (index + 1).toDouble() / commits.size
+                repositoryStore.upsertDownloadJob(
+                    BranchDownloadJob(
+                        id = jobId,
+                        repositoryId = repository.id,
+                        branchName = branch.name,
+                        status = BranchDownloadJobStatus.RUNNING,
+                        progress = progress,
+                        errorMessage = null,
+                    ),
+                )
+                emit(
+                    BranchDownloadProgress.CommitStored(
+                        sha = commit.sha,
+                        completed = index + 1,
+                        total = commits.size,
+                    ),
+                )
+                return@forEachIndexed
+            }
+
             val details = when (
                 val result = remoteDataSource.getCommitDetails(
                     owner = repository.owner,
@@ -173,6 +200,15 @@ class GithubBranchDownloader(
         )
         emit(BranchDownloadProgress.Completed)
     }
+
+    // A stored commit has GitCommit + CommitFile rows; a commit that only exists
+    // as a list entry (summary) has no files yet. Non-empty files therefore mean
+    // the detail download already completed for this sha.
+    private suspend fun hasStoredDetails(sha: String): Boolean =
+        when (val result = repositoryStore.getCommitDetails(sha)) {
+            is Result.Success -> result.data.files.isNotEmpty()
+            is Result.Error -> false
+        }
 
     private suspend fun failJob(
         jobId: String,
