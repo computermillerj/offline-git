@@ -1,16 +1,16 @@
 package dev.jem.offlinegit.presentation
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.core.calculateTargetValue
 import androidx.compose.animation.rememberSplineBasedDecay
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.horizontalDrag
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -60,15 +60,18 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
@@ -425,6 +428,11 @@ private fun DiffSource.chipStyle(): ChipStyle = when (this) {
     DiffSource.LOCAL_BLOB -> ChipStyle.NEUTRAL
 }
 
+// Minimum width a sidebar can be dragged down to before it stops shrinking.
+private const val MinSidebarWidthDp = 180f
+private val SidebarDividerWidth = 16.dp
+private val CollapsedRailWidth = 28.dp
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WideOfflineGitScreen(
@@ -432,11 +440,15 @@ private fun WideOfflineGitScreen(
     onAction: (OfflineGitAction) -> Unit,
     onConnectClick: () -> Unit,
 ) {
-    var isSidebarVisible by rememberSaveable { mutableStateOf(true) }
     var showSourceSheet by remember { mutableStateOf(false) }
-    // Hoisted above the AnimatedVisibility: state remembered inside it is
-    // discarded when the sidebar collapses, which would reset its scroll.
-    val sidebarListState = rememberLazyListState()
+    var commitsCollapsed by rememberSaveable { mutableStateOf(false) }
+    var filesCollapsed by rememberSaveable { mutableStateOf(false) }
+    var commitsWidthDp by rememberSaveable { mutableStateOf(280f) }
+    var filesWidthDp by rememberSaveable { mutableStateOf(280f) }
+    // Hoisted above each pane's collapse: state remembered inside the pane
+    // content would be discarded when it collapses, which would reset its scroll.
+    val commitsListState = rememberLazyListState()
+    val filesListState = rememberLazyListState()
     // A restored selection can sit far down the commit list, so bring it into
     // view once when commits first load — not on every selection change, since
     // tapping a commit shouldn't yank the list around.
@@ -446,8 +458,16 @@ private fun WideOfflineGitScreen(
             hasScrolledToRestoredCommit = true
             state.sidebarCommitIndex(state.selectedCommitSha)?.let { index ->
                 // A couple of items of context above the selected commit.
-                sidebarListState.scrollToItem((index - 2).coerceAtLeast(0))
+                commitsListState.scrollToItem((index - 2).coerceAtLeast(0))
             }
+        }
+    }
+    // Keep the selected file visible in its sidebar, whether the selection
+    // changed from clicking here or from scrolling the diff pane.
+    LaunchedEffect(state.selectedFilePath) {
+        val index = state.files.indexOfFirst { it.path == state.selectedFilePath }
+        if (index >= 0) {
+            filesListState.animateScrollToItem(index)
         }
     }
     Scaffold(
@@ -456,53 +476,64 @@ private fun WideOfflineGitScreen(
                 state = state,
                 onAction = onAction,
                 onConnectClick = onConnectClick,
-                onToggleSidebar = { isSidebarVisible = !isSidebarVisible },
                 onSourceClick = { showSourceSheet = true },
             )
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { contentPadding ->
-        Row(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding),
         ) {
-            AnimatedVisibility(
-                visible = isSidebarVisible,
-                enter = expandHorizontally(),
-                exit = shrinkHorizontally(),
-            ) {
-                Row {
+            // Neither sidebar may grow past half the available width, so the
+            // diff pane always keeps room to be useful.
+            val maxPaneWidthDp = maxWidth.value / 2f
+            Row(modifier = Modifier.fillMaxSize()) {
+                ResizableSidebar(
+                    widthDp = commitsWidthDp,
+                    onWidthChange = { commitsWidthDp = it },
+                    collapsed = commitsCollapsed,
+                    onToggleCollapsed = { commitsCollapsed = !commitsCollapsed },
+                    maxWidthDp = maxPaneWidthDp,
+                ) {
                     LazyColumn(
-                        state = sidebarListState,
-                        modifier = Modifier
-                            .width(320.dp)
-                            .fillMaxHeight()
-                            .background(MaterialTheme.colorScheme.surface),
+                        state = commitsListState,
+                        modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        leftPaneItems(
+                        commitsPaneItems(
                             state = state,
                             onAction = onAction,
                             onChooseSourceClick = { showSourceSheet = true },
                         )
                     }
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .fillMaxHeight()
-                            .background(MaterialTheme.colorScheme.outlineVariant),
-                    )
                 }
+                ResizableSidebar(
+                    widthDp = filesWidthDp,
+                    onWidthChange = { filesWidthDp = it },
+                    collapsed = filesCollapsed,
+                    onToggleCollapsed = { filesCollapsed = !filesCollapsed },
+                    maxWidthDp = maxPaneWidthDp,
+                ) {
+                    LazyColumn(
+                        state = filesListState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        filesPaneItems(state = state, onAction = onAction)
+                    }
+                }
+                DiffViewerPane(
+                    state = state,
+                    onAction = onAction,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
             }
-            DiffViewerPane(
-                state = state,
-                onAction = onAction,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            )
         }
     }
 
@@ -512,6 +543,88 @@ private fun WideOfflineGitScreen(
             onAction = onAction,
             onDismiss = { showSourceSheet = false },
         )
+    }
+}
+
+// A sidebar pane that can be dragged wider/narrower via its trailing divider,
+// or collapsed to a thin rail. Width/collapsed state is hoisted so callers can
+// persist it with rememberSaveable, the same way isSidebarVisible worked
+// before the sidebar was split into independent commits/files panes.
+@Composable
+private fun ResizableSidebar(
+    widthDp: Float,
+    onWidthChange: (Float) -> Unit,
+    collapsed: Boolean,
+    onToggleCollapsed: () -> Unit,
+    maxWidthDp: Float,
+    content: @Composable () -> Unit,
+) {
+    if (collapsed) {
+        Box(
+            modifier = Modifier
+                .width(CollapsedRailWidth)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.surface)
+                .clickable(onClick = onToggleCollapsed),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Text(
+                text = "›",
+                modifier = Modifier.padding(top = 20.dp),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+
+    val density = LocalDensity.current
+    Row(modifier = Modifier.fillMaxHeight()) {
+        Box(
+            modifier = Modifier
+                .width(widthDp.dp)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.surface),
+        ) {
+            content()
+        }
+        Column(
+            modifier = Modifier
+                .width(SidebarDividerWidth)
+                .fillMaxHeight(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            IconButton(
+                onClick = onToggleCollapsed,
+                modifier = Modifier.size(SidebarDividerWidth),
+            ) {
+                Text(
+                    text = "‹",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .draggable(
+                        orientation = Orientation.Horizontal,
+                        state = rememberDraggableState { delta ->
+                            val deltaDp = with(density) { delta.toDp().value }
+                            onWidthChange((widthDp + deltaDp).coerceIn(MinSidebarWidthDp, maxWidthDp))
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.outlineVariant),
+                )
+            }
+        }
     }
 }
 
@@ -566,7 +679,6 @@ private fun WideTopBar(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
     onConnectClick: () -> Unit,
-    onToggleSidebar: () -> Unit,
     onSourceClick: () -> Unit,
 ) {
     val title = listOfNotNull(
@@ -577,15 +689,6 @@ private fun WideTopBar(
         title = title,
         subtitle = state.commitsSubtitle(),
         onTitleClick = onSourceClick,
-        navigationIcon = {
-            IconButton(onClick = onToggleSidebar) {
-                Text(
-                    text = "☰",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
         isLoading = state.isLoading,
         actions = {
             DiffViewerMode.entries.forEach { mode ->
@@ -605,9 +708,9 @@ private fun WideTopBar(
     )
 }
 
-// The sidebar is the review surface only: commits and the changed-file jump
-// list. Repo/branch/download selection lives in the app-bar SourceSheet.
-private fun LazyListScope.leftPaneItems(
+// The commits sidebar: status strip plus the commit list. Repo/branch/download
+// selection lives in the app-bar SourceSheet.
+private fun LazyListScope.commitsPaneItems(
     state: OfflineGitState,
     onAction: (OfflineGitAction) -> Unit,
     onChooseSourceClick: () -> Unit,
@@ -639,8 +742,26 @@ private fun LazyListScope.leftPaneItems(
             )
         }
     }
+}
+
+// The files sidebar: a jump index into DiffViewerPane's stacked file diffs.
+// Selection follows either a direct click here or scrolling the diff pane.
+private fun LazyListScope.filesPaneItems(
+    state: OfflineGitState,
+    onAction: (OfflineGitAction) -> Unit,
+) {
     item { SectionLabel(text = "Files · ${state.files.size} changed") }
-    item { ChangedFilesSection(state = state, onAction = onAction, showCommitMessage = false) }
+    if (state.files.isEmpty()) {
+        item { EmptySectionText(text = "Select a commit to see changed files.") }
+    } else {
+        items(state.files, key = { file -> "file:${file.path}" }) { file ->
+            ChangedFileRow(
+                file = file,
+                isSelected = file.path == state.selectedFilePath,
+                onClick = { onAction(OfflineGitAction.OnFileClick(file.path)) },
+            )
+        }
+    }
 }
 
 @Composable
@@ -696,16 +817,54 @@ private fun DiffViewerPane(
     }
 
     val listState = rememberLazyListState()
+    // Guards the scroll-driven selection below from fighting this effect's own
+    // programmatic scroll while a file click is still animating into place.
+    var isProgrammaticScroll by remember { mutableStateOf(false) }
     // Sidebar file clicks land here. Item 0 is the commit header, so file i
     // sits at item i + 1; the first file scrolls to the top so the header
     // stays visible.
     LaunchedEffect(commit.sha, state.selectedFilePath) {
-        val index = fileDiffs.indexOfFirst { it.file.path == state.selectedFilePath }
-        if (index > 0) {
-            listState.animateScrollToItem(index + 1)
-        } else {
-            listState.scrollToItem(0)
+        isProgrammaticScroll = true
+        try {
+            val index = fileDiffs.indexOfFirst { it.file.path == state.selectedFilePath }
+            if (index > 0) {
+                listState.animateScrollToItem(index + 1)
+            } else {
+                listState.scrollToItem(0)
+            }
+        } finally {
+            isProgrammaticScroll = false
         }
+    }
+
+    // Whichever file diff dominates the viewport is "the file being shown" —
+    // the reverse of the click-to-scroll effect above, so scrolling drives the
+    // sidebar's selection instead of only the other way around.
+    val currentFileIndexState = remember(fileDiffs) {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val viewportStart = layoutInfo.viewportStartOffset
+            val viewportEnd = layoutInfo.viewportEndOffset
+            layoutInfo.visibleItemsInfo
+                .filter { it.index > 0 }
+                .maxByOrNull { visibleItem ->
+                    val top = maxOf(visibleItem.offset, viewportStart)
+                    val bottom = minOf(visibleItem.offset + visibleItem.size, viewportEnd)
+                    (bottom - top).coerceAtLeast(0)
+                }
+                ?.index
+                ?.minus(1)
+        }
+    }
+    LaunchedEffect(fileDiffs) {
+        snapshotFlow { currentFileIndexState.value }
+            .collect { index ->
+                if (isProgrammaticScroll || index == null) return@collect
+                val path = fileDiffs.getOrNull(index)?.file?.path ?: return@collect
+                if (path != state.selectedFilePath) {
+                    onAction(OfflineGitAction.OnFileClick(path))
+                }
+            }
     }
 
     LazyColumn(
@@ -2125,7 +2284,7 @@ private fun OfflineGitState.selectedFileDiff(): CommitFileDiff? =
 private fun OfflineGitState.activeAccount(): GithubAccount? = accounts
     .firstOrNull { it.id == activeAccountId }
 
-// Sidebar item index of a commit row. Must mirror leftPaneItems' order: the
+// Sidebar item index of a commit row. Must mirror commitsPaneItems' order: the
 // optional error and sync-status rows, then the "Commits" label, then commits.
 private fun OfflineGitState.sidebarCommitIndex(sha: String?): Int? {
     val commitIndex = commits.indexOfFirst { it.sha == sha }
